@@ -1,9 +1,0 @@
-## Interface: 110002
-## Title: Dave's Quests
-## Notes: Clean parchment quest tracker with Dave's Notes & Dave's Gather integration.
-## Author: Dave
-## Version: 1.0.0
-## SavedVariables: DavesQuestsDB
-## IconTexture: Interface\AddOns\DavesQuests\icon.png
-
-DavesQuests.lua

@@ -1,9 +1,0 @@
-## Interface: 110002
-## Title: Dave's Mobile Menu
-## Notes: Movable utility dock & launcher for Dave's AddOns.
-## Author: Dave
-## Version: 1.0.0
-## SavedVariables: DavesMobileMenuDB
-## IconTexture: Interface\AddOns\DavesMobileMenu\icon.png
-
-DavesMobileMenu.lua

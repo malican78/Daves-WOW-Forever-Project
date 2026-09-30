@@ -1,9 +1,0 @@
-## Interface: 110002
-## Title: Dave's Bags
-## Notes: Lightweight unified single-window bag replacement with Bank Cache.
-## Author: Dave
-## Version: 1.0.0
-## SavedVariables: DavesBagsDB
-## IconTexture: Interface\AddOns\DavesBags\icon.png
-
-DavesBags.lua
