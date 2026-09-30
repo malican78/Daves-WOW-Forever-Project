@@ -1,0 +1,473 @@
+local addonName, addon = ...
+
+-- =========================================================
+-- Theme & Color Palette (Matched to Dave's AddOns)
+-- =========================================================
+local WINDOW_COLOR = { 0.73, 0.60, 0.37 }
+local WINDOW_BORDER_COLOR = { 0.48, 0.36, 0.22 }
+local GOLD_TEXT_COLOR = { 1, 0.82, 0.30 }
+local MUTED_GOLD_COLOR = { 0.95, 0.82, 0.48 }
+
+-- Native Blizzard in-line textures
+local ICON_CHECK = "|TInterface\\RAIDFRAME\\ReadyCheck-Ready:15:15:0:0|t"
+local ICON_UNCHECK = "|TInterface\\Buttons\\UI-CheckBox-Up:14:14:0:0|t"
+
+-- Data persistence
+DavesQuestsDB = DavesQuestsDB or {}
+if DavesQuestsDB.x == nil then DavesQuestsDB.x = -20 end
+if DavesQuestsDB.y == nil then DavesQuestsDB.y = -80 end
+if DavesQuestsDB.point == nil then DavesQuestsDB.point = "TOPRIGHT" end
+if DavesQuestsDB.hideBlizzTracker == nil then DavesQuestsDB.hideBlizzTracker = true end
+
+local questRows = {}
+local questWindow = nil
+
+-- =========================================================
+-- Theme Helper Functions
+-- =========================================================
+local function setTextureColor(texture, r, g, b, a)
+    texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+    texture:SetVertexColor(r, g, b, a or 1)
+end
+
+local function createBorder(frame, color, thickness)
+    thickness = thickness or 2
+    local top = frame:CreateTexture(nil, "BORDER")
+    setTextureColor(top, color[1], color[2], color[3], 1)
+    top:SetPoint("TOPLEFT", frame, "TOPLEFT")
+    top:SetPoint("TOPRIGHT", frame, "TOPRIGHT")
+    top:SetHeight(thickness)
+
+    local bottom = frame:CreateTexture(nil, "BORDER")
+    setTextureColor(bottom, color[1], color[2], color[3], 1)
+    bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT")
+    bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
+    bottom:SetHeight(thickness)
+
+    local left = frame:CreateTexture(nil, "BORDER")
+    setTextureColor(left, color[1], color[2], color[3], 1)
+    left:SetPoint("TOPLEFT", frame, "TOPLEFT")
+    left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT")
+    left:SetWidth(thickness)
+
+    local right = frame:CreateTexture(nil, "BORDER")
+    setTextureColor(right, color[1], color[2], color[3], 1)
+    right:SetPoint("TOPRIGHT", frame, "TOPRIGHT")
+    right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
+    right:SetWidth(thickness)
+end
+
+local function applyWindowBackground(frame)
+    frame.background = frame:CreateTexture(nil, "BACKGROUND")
+    frame.background:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background")
+    frame.background:SetAllPoints(frame)
+    if frame.background.SetHorizTile then frame.background:SetHorizTile(true) end
+    if frame.background.SetVertTile then frame.background:SetVertTile(true) end
+end
+
+local function registerEscapeFrame(frameName)
+    UISpecialFrames = UISpecialFrames or {}
+    for index = 1, #UISpecialFrames do
+        if UISpecialFrames[index] == frameName then return end
+    end
+    table.insert(UISpecialFrames, frameName)
+end
+
+-- =========================================================
+-- Hide Blizzard's Default Objective Tracker (Edit Mode Safe)
+-- =========================================================
+local function SuppressBlizzardTracker()
+    local tracker = ObjectiveTrackerContainer or ObjectiveTrackerFrame or WatchFrame
+    if not tracker then return end
+
+    if DavesQuestsDB.hideBlizzTracker then
+        tracker:SetAlpha(0)
+        tracker:Hide()
+        if tracker.EnableMouse then tracker:EnableMouse(false) end
+
+        if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
+            ObjectiveTrackerFrame:SetAlpha(0)
+            ObjectiveTrackerFrame:Hide()
+            if ObjectiveTrackerFrame.EnableMouse then ObjectiveTrackerFrame:EnableMouse(false) end
+        end
+    else
+        tracker:SetAlpha(1)
+        tracker:Show()
+        if tracker.EnableMouse then tracker:EnableMouse(true) end
+
+        if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
+            ObjectiveTrackerFrame:SetAlpha(1)
+            ObjectiveTrackerFrame:Show()
+            if ObjectiveTrackerFrame.EnableMouse then ObjectiveTrackerFrame:EnableMouse(true) end
+        end
+    end
+
+    -- Prevent Blizzard engine from forcing it visible on quest changes
+    if not tracker._davesQuestsHooked then
+        tracker._davesQuestsHooked = true
+        tracker:HookScript("OnShow", function(self)
+            if DavesQuestsDB.hideBlizzTracker then
+                self:Hide()
+                self:SetAlpha(0)
+            end
+        end)
+    end
+end
+
+-- =========================================================
+-- Dave's Notes Synergy
+-- =========================================================
+local function ExportQuestToDavesNotes(questData)
+    if type(DavesNotes_AddItemInfo) ~= "function" then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[Dave's Quests]|r Dave's Notes addon is not loaded.")
+        return false
+    end
+
+    local title = string.format("Quest: %s", questData.title or "Quest Note")
+    local lines = {}
+    table.insert(lines, string.format("Zone/Header: %s", questData.header or "World"))
+    table.insert(lines, "Objectives:")
+
+    if questData.objectives and #questData.objectives > 0 then
+        for _, obj in ipairs(questData.objectives) do
+            local mark = obj.finished and "[x] " or "[ ] "
+            table.insert(lines, mark .. (obj.text or "Objective"))
+        end
+    else
+        local mark = questData.isComplete and "[x] Complete Quest" or "[ ] Complete Quest"
+        table.insert(lines, mark)
+    end
+
+    local action = DavesNotes_AddItemInfo(title, table.concat(lines, "\n"))
+    if action == "inserted" then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Quests]|r Inserted " .. questData.title .. " into active note.")
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Quests]|r Created note for " .. questData.title .. ".")
+    end
+    return true
+end
+
+-- =========================================================
+-- Dave's Gather Synergy (Tooltip Scan for Objectives)
+-- =========================================================
+local function ShowQuestObjectiveTooltip(frame, questData)
+    GameTooltip:SetOwner(frame, "ANCHOR_LEFT")
+    GameTooltip:AddLine(questData.title, 1, 0.82, 0)
+    GameTooltip:AddLine(questData.header or "General", 0.7, 0.7, 0.7)
+    GameTooltip:AddLine(" ")
+
+    if questData.objectives then
+        for _, obj in ipairs(questData.objectives) do
+            local mark = obj.finished and (ICON_CHECK .. " |cff008800") or (ICON_UNCHECK .. " |cffffffff")
+            GameTooltip:AddLine(mark .. (obj.text or "") .. "|r")
+
+            if type(DavesGather_GetLocationsForItem) == "function" and not obj.finished then
+                local spots = DavesGather_GetLocationsForItem(obj.text or "")
+                if spots and #spots > 0 then
+                    for i = 1, math.min(2, #spots) do
+                        GameTooltip:AddLine(string.format("   |cffffd100[Gather]|r %s: %s (x%d)", spots[i].zone, spots[i].subZone, spots[i].count), 0.85, 0.75, 0.5)
+                    end
+                end
+            end
+        end
+    end
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("<Left-Click: Open Quest Map>", 0.5, 0.8, 1)
+    GameTooltip:AddLine("<Alt + Right-Click: Export to Dave's Notes>", 0.48, 0.82, 0.48)
+    GameTooltip:Show()
+end
+
+-- =========================================================
+-- Main Quest Tracker Panel Setup
+-- =========================================================
+local function BuildQuestWindow()
+    local frame = CreateFrame("Frame", "DavesQuestsFrame", UIParent)
+    frame:SetSize(350, 480)
+    frame:SetPoint(DavesQuestsDB.point or "TOPRIGHT", UIParent, DavesQuestsDB.point or "TOPRIGHT", DavesQuestsDB.x or -20, DavesQuestsDB.y or -80)
+    
+    frame:SetFrameStrata("HIGH")
+    frame:SetToplevel(true)
+    frame:SetMovable(true)
+    frame:EnableMouse(true)
+    frame:SetClampedToScreen(true)
+    applyWindowBackground(frame)
+    createBorder(frame, WINDOW_BORDER_COLOR, 3)
+    registerEscapeFrame("DavesQuestsFrame")
+
+    -- Header Panel
+    local header = CreateFrame("Frame", nil, frame)
+    header:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -4)
+    header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+    header:SetHeight(36)
+    applyWindowBackground(header)
+    createBorder(header, WINDOW_BORDER_COLOR, 2)
+
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+    header:SetScript("OnDragStart", function() frame:StartMoving() end)
+    header:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        local pt, _, relPt, x, y = frame:GetPoint()
+        DavesQuestsDB.point = pt
+        DavesQuestsDB.x = x
+        DavesQuestsDB.y = y
+    end)
+
+    local title = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", header, "TOPLEFT", 10, -5)
+    title:SetText("Dave's Quests")
+    title:SetTextColor(GOLD_TEXT_COLOR[1], GOLD_TEXT_COLOR[2], GOLD_TEXT_COLOR[3])
+
+    frame.subTitle = header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.subTitle:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 10, 4)
+    frame.subTitle:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
+
+    local close = CreateFrame("Button", nil, header, "UIPanelCloseButton")
+    close:SetPoint("RIGHT", header, "RIGHT", -4, 0)
+    close:SetScript("OnClick", function() frame:Hide() end)
+
+    -- Scroll Area
+    local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 6, -6)
+    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
+
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(310, 1)
+    scroll:SetScrollChild(content)
+
+    frame.emptyText = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    frame.emptyText:SetPoint("CENTER", scroll, "CENTER", 0, 0)
+    frame.emptyText:SetWidth(260)
+    frame.emptyText:SetJustifyH("CENTER")
+    frame.emptyText:SetText("No active quests tracked.")
+    frame.emptyText:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
+
+    -- Row Generator
+    local function GetQuestRow(index)
+        if not questRows[index] then
+            local row = CreateFrame("Button", nil, content)
+            row:SetWidth(306)
+            row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+
+            -- Solid Parchment Card Background
+            row.bg = row:CreateTexture(nil, "BACKGROUND")
+            setTextureColor(row.bg, 0.99, 0.98, 0.94, 1.0)
+            row.bg:SetAllPoints(row)
+            createBorder(row, { 0.45, 0.32, 0.18 }, 1)
+
+            row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
+            setTextureColor(row.highlight, 1, 0.85, 0.40, 0.35)
+            row.highlight:SetAllPoints(row)
+
+            -- Quest Title
+            row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+            row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
+            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -8)
+            row.title:SetJustifyH("LEFT")
+            row.title:SetWordWrap(true)
+            row.title:SetTextColor(0.50, 0.22, 0.02)
+
+            -- Objective Summary Lines
+            row.objText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.objText:SetPoint("TOPLEFT", row.title, "BOTTOMLEFT", 0, -6)
+            row.objText:SetWidth(286)
+            row.objText:SetJustifyH("LEFT")
+            row.objText:SetWordWrap(true)
+            row.objText:SetSpacing(4)
+            row.objText:SetTextColor(0.10, 0.08, 0.06)
+
+            row:SetScript("OnEnter", function(self)
+                if self.questData then
+                    ShowQuestObjectiveTooltip(self, self.questData)
+                end
+            end)
+
+            row:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+
+            row:SetScript("OnClick", function(self, button)
+                if not self.questData then return end
+                if button == "RightButton" and IsAltKeyDown() then
+                    ExportQuestToDavesNotes(self.questData)
+                elseif button == "LeftButton" then
+                    if QuestMapFrame_OpenToQuestDetails then
+                        QuestMapFrame_OpenToQuestDetails(self.questData.questID)
+                    elseif ShowUIPanel and QuestLogFrame then
+                        ShowUIPanel(QuestLogFrame)
+                    end
+                end
+            end)
+
+            questRows[index] = row
+        end
+        return questRows[index]
+    end
+
+    function frame:RefreshQuests()
+        local quests = {}
+        local numEntries = C_QuestLog.GetNumQuestLogEntries()
+        local currentHeader = "World"
+
+        for index = 1, numEntries do
+            local info = C_QuestLog.GetInfo(index)
+            if info then
+                if info.isHeader then
+                    currentHeader = info.title or "World"
+                elseif not info.isHidden then
+                    local qID = info.questID
+                    local objectives = C_QuestLog.GetQuestObjectives(qID)
+                    local isComplete = C_QuestLog.IsComplete(qID)
+
+                    table.insert(quests, {
+                        questID = qID,
+                        title = info.title,
+                        level = info.level,
+                        header = currentHeader,
+                        isComplete = isComplete,
+                        objectives = objectives
+                    })
+                end
+            end
+        end
+
+        frame.subTitle:SetText(string.format("%d Active Quests", #quests))
+
+        if #quests == 0 then
+            frame.emptyText:Show()
+        else
+            frame.emptyText:Hide()
+        end
+
+        local currentY = 0
+        for i = 1, #quests do
+            local qData = quests[i]
+            local row = GetQuestRow(i)
+            row.questData = qData
+
+            -- Build Title with level and completed checkmark
+            local completedBadge = qData.isComplete and ("  " .. ICON_CHECK .. " |cff008800COMPLETED|r") or ""
+            row.title:SetText(string.format("[%d] %s%s", qData.level or 0, qData.title or "Quest", completedBadge))
+
+            -- Build Objective Lines
+            local objLines = {}
+            if qData.isComplete then
+                table.insert(objLines, ICON_CHECK .. " |cff007700Ready for turn-in!|r")
+            elseif qData.objectives and #qData.objectives > 0 then
+                for _, obj in ipairs(qData.objectives) do
+                    if obj.finished then
+                        table.insert(objLines, ICON_CHECK .. " |cff007700" .. (obj.text or "") .. "|r")
+                    else
+                        table.insert(objLines, ICON_UNCHECK .. " |cff111111" .. (obj.text or "") .. "|r")
+                    end
+                end
+            else
+                table.insert(objLines, ICON_UNCHECK .. " |cff444444Quest in progress...|r")
+            end
+
+            local formattedObjs = table.concat(objLines, "\n")
+            row.objText:SetText(formattedObjs)
+
+            row.title:SetWidth(286)
+            row.objText:SetWidth(286)
+
+            local titleHeight = row.title:GetStringHeight() or 18
+            local objHeight = row.objText:GetStringHeight() or 22
+            local totalCardHeight = titleHeight + objHeight + 24
+            row:SetHeight(totalCardHeight)
+
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -currentY)
+            row:Show()
+
+            currentY = currentY + totalCardHeight + 8
+        end
+
+        content:SetHeight(math.max(1, currentY))
+
+        for i = #quests + 1, #questRows do
+            questRows[i]:Hide()
+        end
+    end
+
+    frame:Hide()
+    questWindow = frame
+    return frame
+end
+
+local function ToggleQuestWindow()
+    if not questWindow then
+        BuildQuestWindow()
+    end
+
+    if questWindow:IsShown() then
+        questWindow:Hide()
+    else
+        questWindow:RefreshQuests()
+        questWindow:Show()
+    end
+end
+
+SLASH_DAVESQUESTS1 = "/dquests"
+SLASH_DAVESQUESTS2 = "/davesquests"
+SlashCmdList["DAVESQUESTS"] = ToggleQuestWindow
+
+-- =========================================================
+-- Event Handling (Live Tracking & Edit Mode Suppression)
+-- =========================================================
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
+eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
+eventFrame:RegisterEvent("QUEST_ACCEPTED")
+eventFrame:RegisterEvent("QUEST_REMOVED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
+
+eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
+        SuppressBlizzardTracker()
+
+        if event == "PLAYER_LOGIN" and type(DavesMobileMenu_RegisterAddon) == "function" then
+            DavesMobileMenu_RegisterAddon("DavesQuests", "Dave's Quests", 134442, ToggleQuestWindow)
+        end
+    elseif questWindow and questWindow:IsShown() then
+        questWindow:RefreshQuests()
+    end
+end)
+
+-- =========================================================
+-- Public API: Check if an item is needed for active quests
+-- =========================================================
+function DavesQuests_GetItemQuestRequirements(itemName)
+    if not itemName or itemName == "" then return nil end
+    local lowerItem = string.lower(itemName)
+    local results = {}
+
+    local numEntries = C_QuestLog.GetNumQuestLogEntries()
+    for index = 1, numEntries do
+        local info = C_QuestLog.GetInfo(index)
+        if info and not info.isHeader and not info.isHidden then
+            local qID = info.questID
+            local objectives = C_QuestLog.GetQuestObjectives(qID)
+            if objectives then
+                for _, obj in ipairs(objectives) do
+                    local objText = obj.text or ""
+                    local lowerObj = string.lower(objText)
+                    -- Check if the objective text mentions this item
+                    if string.find(lowerObj, lowerItem, 1, true) then
+                        table.insert(results, {
+                            questTitle = info.title or "Quest",
+                            questLevel = info.level or 0,
+                            objectiveText = objText,
+                            finished = obj.finished or false,
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    return #results > 0 and results or nil
+end
