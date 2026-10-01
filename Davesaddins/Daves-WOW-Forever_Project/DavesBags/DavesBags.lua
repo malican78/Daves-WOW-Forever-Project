@@ -88,6 +88,44 @@ local function FormatMoneyString(copper)
     return string.format("%dg %ds %dc", g, s, c)
 end
 
+-- =========================================================================
+-- Dave's Bags: Trash Grays Core Logic & Confirmation Popup
+-- =========================================================================
+local function DeleteAllGrayItems()
+    local deletedCount = 0
+
+    for bag = 0, 4 do
+        local numSlots = C_Container.GetContainerNumSlots(bag)
+        for slot = 1, numSlots do
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info and (info.quality == Enum.ItemQuality.Poor or info.quality == 0) and not info.isLocked then
+                C_Container.PickupContainerItem(bag, slot)
+                DeleteCursorItem()
+                deletedCount = deletedCount + 1
+            end
+        end
+    end
+
+    if deletedCount > 0 then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff00ccff[Dave's Bags]|r Trashed %d gray item(s).", deletedCount))
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ccff[Dave's Bags]|r No gray items found.")
+    end
+end
+
+StaticPopupDialogs["DAVESBAGS_CONFIRM_TRASH_GRAYS"] = {
+    text = "Are you sure you want to delete ALL gray items in your bags?\n|cffff2020This cannot be undone!|r",
+    button1 = YES,
+    button2 = NO,
+    OnAccept = function()
+        DeleteAllGrayItems()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
 -- =========================================================
 -- Main Frame Setup
 -- =========================================================
@@ -138,7 +176,7 @@ local closeBtn = CreateFrame("Button", nil, header, "UIPanelCloseButton")
 closeBtn:SetPoint("RIGHT", header, "RIGHT", -6, 0)
 closeBtn:SetScript("OnClick", function() BagFrame:Hide() end)
 
--- "Sell Junk" Button
+-- "Sell Junk" Button (Visible only at merchants)
 local sellJunkBtn = CreateFrame("Button", "DavesBagsSellJunkBtn", header, "UIPanelButtonTemplate")
 sellJunkBtn:SetSize(70, 22)
 sellJunkBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
@@ -156,6 +194,27 @@ local bankToggleBtn = CreateFrame("Button", "DavesBagsBankBtn", header, "UIPanel
 bankToggleBtn:SetSize(80, 22)
 bankToggleBtn:SetPoint("RIGHT", categoryToggleBtn, "LEFT", -4, 0)
 bankToggleBtn:SetText("View Bank")
+
+-- "Trash Grays" Button
+local trashGraysBtn = CreateFrame("Button", "DavesBagsTrashGraysBtn", header, "UIPanelButtonTemplate")
+trashGraysBtn:SetSize(80, 22)
+trashGraysBtn:SetPoint("RIGHT", bankToggleBtn, "LEFT", -4, 0)
+trashGraysBtn:SetText("Trash Grays")
+
+trashGraysBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Trash Grays", 1, 1, 1)
+    GameTooltip:AddLine("Permanently destroys all poor-quality (gray) items in your bags.", 1, 0.8, 0, true)
+    GameTooltip:Show()
+end)
+
+trashGraysBtn:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
+
+trashGraysBtn:SetScript("OnClick", function()
+    StaticPopup_Show("DAVESBAGS_CONFIRM_TRASH_GRAYS")
+end)
 
 -- =========================================================
 -- Footer & Money Balance Display

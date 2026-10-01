@@ -29,7 +29,8 @@ local GATHER_SPELLS = {
     ["Mining"] = "Mining",
     ["Opening"] = "Treasure",
     ["Extract Gas"] = "Engineering",
-    ["Skinning"] = "Skinning"
+    ["Skinning"] = "Skinning",
+	["Fishing"] = "Fishing",
 }
 
 -- =========================================================
@@ -719,8 +720,9 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, ...)
             lastGatherTime = GetTime()
         end
 
-    elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
-        if lastGatherSpell and (GetTime() - lastGatherTime) < 3.5 then
+elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
+        local maxWait = (lastGatherSpell == "Fishing") and 22 or 3.5
+        if lastGatherSpell and (GetTime() - lastGatherTime) < maxWait then
             local numItems = GetNumLootItems()
             for i = 1, numItems do
                 local icon, name = GetLootSlotInfo(i)

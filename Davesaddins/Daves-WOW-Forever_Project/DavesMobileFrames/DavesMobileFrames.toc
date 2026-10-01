@@ -1,0 +1,9 @@
+## Interface: 110002
+## Title: |cff00ccffDave's|r Mobile Frames
+## Notes: Allows default Blizzard UI windows to be moved freely and saves their positions.
+## Author: Dave
+## Version: 1.0.0
+## IconTexture: Interface\AddOns\DavesMobileFrames\icon.png
+## SavedVariables: DavesMobileFramesDB
+
+DavesMobileFrames.lua
