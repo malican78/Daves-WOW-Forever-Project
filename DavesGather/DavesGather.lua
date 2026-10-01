@@ -30,8 +30,22 @@ local GATHER_SPELLS = {
     ["Opening"] = "Treasure",
     ["Extract Gas"] = "Engineering",
     ["Skinning"] = "Skinning",
-	["Fishing"] = "Fishing",
+    ["Fishing"] = "Fishing",
+    ["Mob Drop"] = "Mob Drop", -- Added to cleanly track cloth drops
 }
+
+
+-- Cloth items dropped by mobs to be monitored
+local TRACKED_CLOTH = {
+    ["Linen Cloth"] = true,
+    ["Wool Cloth"] = true,
+    ["Silk Cloth"] = true,
+    ["Mageweave Cloth"] = true,
+    ["Runecloth"] = true,
+    ["Felcloth"] = true,
+    ["Mooncloth"] = true,
+}
+
 
 -- =========================================================
 -- Theme Helper Functions
@@ -722,6 +736,8 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, ...)
 
 elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
         local maxWait = (lastGatherSpell == "Fishing") and 22 or 3.5
+        
+        -- Scenario A: Standard node gather logic
         if lastGatherSpell and (GetTime() - lastGatherTime) < maxWait then
             local numItems = GetNumLootItems()
             for i = 1, numItems do
@@ -732,12 +748,17 @@ elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
                 end
             end
             lastGatherSpell = nil
+            
+        -- Scenario B: Check for dropped cloth items from regular mob kills
+        else
+            local numItems = GetNumLootItems()
+            for i = 1, numItems do
+                local icon, name = GetLootSlotInfo(i)
+                if name and TRACKED_CLOTH[name] then
+                    -- Temporarily override profession context for the database record
+                    lastGatherSpell = "Mob Drop"
+                    RecordGatheredNode(name, icon)
+                    lastGatherSpell = nil
+                end
+            end
         end
-
-    elseif event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
-        RefreshWorldMapPins()
-        if gatherWindow and gatherWindow:IsShown() then
-            gatherWindow:RefreshList()
-        end
-    end
-end)
