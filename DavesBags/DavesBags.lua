@@ -235,6 +235,179 @@ local function UpdateMoneyDisplay()
     moneyText:SetText(FormatMoneyString(copper))
 end
 
+-- =========================================================
+-- Footer Menu Dock (Dave's Suite Shortcuts & Utilities)
+-- =========================================================
+local footerMenuButtons = {}
+local activeFooterButtons = {}
+local FOOTER_BTN_SIZE = 22
+local FOOTER_BTN_SPACING = 5
+
+function DavesBags_RegisterMenuButton(id, title, icon, toggleFunc, desc)
+    for _, item in ipairs(footerMenuButtons) do
+        if item.id == id then
+            item.title = title
+            item.icon = icon
+            item.toggleFunc = toggleFunc
+            item.desc = desc
+            if BagFrame and BagFrame.UpdateFooterMenu then
+                BagFrame:UpdateFooterMenu()
+            end
+            return
+        end
+    end
+
+    table.insert(footerMenuButtons, {
+        id = id,
+        title = title,
+        icon = icon,
+        toggleFunc = toggleFunc,
+        desc = desc
+    })
+
+    if BagFrame and BagFrame.UpdateFooterMenu then
+        BagFrame:UpdateFooterMenu()
+    end
+end
+
+-- Provide cross-addon compatibility with DavesMobileMenu
+if not DavesMobileMenu_RegisterAddon then
+    DavesMobileMenu_RegisterAddon = function(id, title, icon, toggleFunc, desc)
+        if id ~= "DavesBags" then
+            DavesBags_RegisterMenuButton(id, title, icon, toggleFunc, desc)
+        end
+    end
+end
+
+function BagFrame:UpdateFooterMenu()
+    local leftOffset = 8
+    for i = 1, #footerMenuButtons do
+        local data = footerMenuButtons[i]
+        local btn = activeFooterButtons[i]
+        if not btn then
+            btn = CreateFrame("Button", nil, footer)
+            btn:SetSize(FOOTER_BTN_SIZE, FOOTER_BTN_SIZE)
+
+            btn.icon = btn:CreateTexture(nil, "ARTWORK")
+            btn.icon:SetAllPoints(btn)
+
+            btn.border = btn:CreateTexture(nil, "OVERLAY")
+            btn.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+            btn.border:SetBlendMode("ADD")
+            btn.border:SetAlpha(0.6)
+            btn.border:SetPoint("TOPLEFT", btn, -3, 3)
+            btn.border:SetPoint("BOTTOMRIGHT", btn, 3, -3)
+
+            btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+            setTextureColor(btn.highlight, 1, 0.82, 0.30, 0.25)
+            btn.highlight:SetAllPoints(btn)
+
+            btn:SetScript("OnEnter", function(self)
+                if not self.data then return end
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:AddLine(self.data.title, 1, 0.82, 0)
+                if self.data.desc and self.data.desc ~= "" then
+                    GameTooltip:AddLine(self.data.desc, 0.95, 0.82, 0.48)
+                end
+                GameTooltip:AddLine("<Click to Open>", 0.5, 0.8, 1)
+                GameTooltip:Show()
+            end)
+
+            btn:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+
+            btn:SetScript("OnClick", function(self)
+                if self.data and type(self.data.toggleFunc) == "function" then
+                    self.data.toggleFunc()
+                end
+            end)
+
+            activeFooterButtons[i] = btn
+        end
+
+        btn.data = data
+        btn.icon:SetTexture(data.icon or 134400)
+        btn:ClearAllPoints()
+        btn:SetPoint("LEFT", footer, "LEFT", leftOffset, 0)
+        btn:Show()
+
+        leftOffset = leftOffset + FOOTER_BTN_SIZE + FOOTER_BTN_SPACING
+    end
+
+    for i = #footerMenuButtons + 1, #activeFooterButtons do
+        activeFooterButtons[i]:Hide()
+    end
+end
+
+local function RegisterDefaultFooterAddons()
+    local function isLoaded(name)
+        if C_AddOns and C_AddOns.IsAddOnLoaded then
+            return C_AddOns.IsAddOnLoaded(name)
+        elseif IsAddOnLoaded then
+            return IsAddOnLoaded(name)
+        end
+        return false
+    end
+
+    local function safeToggle(name, slashKey)
+        if C_AddOns and C_AddOns.LoadAddOn and not (C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded(name)) then
+            pcall(C_AddOns.LoadAddOn, name)
+        end
+        if SlashCmdList and slashKey and SlashCmdList[slashKey] then
+            SlashCmdList[slashKey]("")
+        end
+    end
+
+    -- 1. Bag Cleanup / Auto-Sort
+    DavesBags_RegisterMenuButton("SortBags", "Sort Bags", 133644, function()
+        if InCombatLockdown and InCombatLockdown() then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[Dave's Bags]|r Cannot sort bags while in combat.")
+            return
+        end
+        if C_Container and C_Container.SortBags then
+            C_Container.SortBags()
+        elseif SortBags then
+            SortBags()
+        end
+    end, "Organize and defragment all bag slots.")
+
+    -- 2. Dave's Notes
+    if isLoaded("DavesNotes") or (SlashCmdList and SlashCmdList["DAVESNOTES"]) then
+        DavesBags_RegisterMenuButton("DavesNotes", "Dave's Notes", 134331, function()
+            safeToggle("DavesNotes", "DAVESNOTES")
+        end, "Open notepad and journal.")
+    end
+
+    -- 3. Dave's Gather
+    if isLoaded("DavesGather") or (SlashCmdList and SlashCmdList["DAVESGATHER"]) then
+        DavesBags_RegisterMenuButton("DavesGather", "Dave's Gather", 134440, function()
+            safeToggle("DavesGather", "DAVESGATHER")
+        end, "Open gathering tracker and hotspot browser.")
+    end
+
+    -- 4. Dave's Quests
+    if isLoaded("DavesQuests") or (SlashCmdList and SlashCmdList["DAVESQUESTS"]) then
+        DavesBags_RegisterMenuButton("DavesQuests", "Dave's Quests", 133872, function()
+            safeToggle("DavesQuests", "DAVESQUESTS")
+        end, "Open quest tracker settings.")
+    end
+
+    -- 5. Dave's Mobile Frames
+    if isLoaded("DavesMobileFrames") or (SlashCmdList and SlashCmdList["DAVESMOBILEFRAMES"]) then
+        DavesBags_RegisterMenuButton("DavesMobileFrames", "Dave's Mobile Frames", 132147, function()
+            safeToggle("DavesMobileFrames", "DAVESMOBILEFRAMES")
+        end, "Reset movable frame anchors.")
+    end
+
+    -- 6. Dave's Mobile Menu (if installed)
+    if isLoaded("DavesMobileMenu") or (SlashCmdList and SlashCmdList["DAVESMOBILEMENU"]) then
+        DavesBags_RegisterMenuButton("DavesMobileMenu", "Dave's Mobile Menu", 134939, function()
+            safeToggle("DavesMobileMenu", "DAVESMOBILEMENU")
+        end, "Toggle on-screen dock launcher.")
+    end
+end
+
 local function SellAllJunk()
     local totalProfit = 0
     local soldCount = 0
@@ -696,6 +869,7 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_MONEY")
 eventFrame:RegisterEvent("MERCHANT_SHOW")
 eventFrame:RegisterEvent("MERCHANT_CLOSED")
@@ -706,7 +880,14 @@ eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 local isBankOpen = false
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_MONEY" then
+    if event == "PLAYER_ENTERING_WORLD" or event == "ADDON_LOADED" then
+        RegisterDefaultFooterAddons()
+        if BagFrame and BagFrame.UpdateFooterMenu then
+            BagFrame:UpdateFooterMenu()
+        end
+        UpdateMoneyDisplay()
+
+    elseif event == "PLAYER_MONEY" then
         UpdateMoneyDisplay()
 
     elseif event == "BANKFRAME_OPENED" then
@@ -806,6 +987,9 @@ local function ToggleUnifiedBag()
         isShowingBank = false
         bankToggleBtn:SetText("View Bank")
         UpdateBagGrid()
+        if BagFrame and BagFrame.UpdateFooterMenu then
+            BagFrame:UpdateFooterMenu()
+        end
         BagFrame:Show()
         BagFrame:Raise()
     end
