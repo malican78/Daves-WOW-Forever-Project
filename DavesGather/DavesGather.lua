@@ -68,8 +68,12 @@ local TRACKED_CLOTH = {
 -- Theme Helper Functions
 -- =========================================================
 local function setTextureColor(texture, r, g, b, a)
-    texture:SetTexture("Interface\\Buttons\\WHITE8X8")
-    texture:SetVertexColor(r, g, b, a or 1)
+    if texture.SetColorTexture then
+        texture:SetColorTexture(r, g, b, a or 1)
+    else
+        texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+        texture:SetVertexColor(r, g, b, a or 1)
+    end
 end
 
 local function createBorder(frame, color, thickness)
@@ -407,10 +411,13 @@ local function BuildGatherWindow()
     local zonePicker = CreateFrame("Frame", nil, frame)
     zonePicker:SetSize(210, 210)
     zonePicker:SetPoint("TOPLEFT", zoneDropdownBtn, "BOTTOMLEFT", 0, -2)
-    zonePicker:SetFrameStrata("DIALOG")
+    zonePicker:SetFrameStrata("FULLSCREEN_DIALOG")
+    zonePicker:SetToplevel(true)
+    zonePicker:SetFrameLevel(250)
+    zonePicker:EnableMouse(true)
 
-    zonePicker.solidBg = zonePicker:CreateTexture(nil, "BACKGROUND")
-    setTextureColor(zonePicker.solidBg, 0.99, 0.97, 0.88, 1.0)
+    zonePicker.solidBg = zonePicker:CreateTexture(nil, "BACKGROUND", nil, -8)
+    setTextureColor(zonePicker.solidBg, 0.98, 0.95, 0.86, 1.0)
     zonePicker.solidBg:SetAllPoints(zonePicker)
     createBorder(zonePicker, WINDOW_BORDER_COLOR, 2)
     zonePicker:Hide()
@@ -418,9 +425,11 @@ local function BuildGatherWindow()
     local pickerScroll = CreateFrame("ScrollFrame", nil, zonePicker, "UIPanelScrollFrameTemplate")
     pickerScroll:SetPoint("TOPLEFT", zonePicker, "TOPLEFT", 6, -6)
     pickerScroll:SetPoint("BOTTOMRIGHT", zonePicker, "BOTTOMRIGHT", -24, 6)
+    pickerScroll:SetFrameLevel(zonePicker:GetFrameLevel() + 2)
 
     local pickerContent = CreateFrame("Frame", nil, pickerScroll)
     pickerContent:SetSize(180, 1)
+    pickerContent:SetFrameLevel(pickerScroll:GetFrameLevel() + 1)
     pickerScroll:SetScrollChild(pickerContent)
 
     local pickerButtons = {}
@@ -434,6 +443,10 @@ local function BuildGatherWindow()
             zonePicker:Hide()
             return
         end
+
+        zonePicker:SetFrameStrata("FULLSCREEN_DIALOG")
+        zonePicker:SetFrameLevel(250)
+        zonePicker:Raise()
 
         local options = {}
         table.insert(options, { id = "ALL", name = "All Zones" })
@@ -469,13 +482,14 @@ local function BuildGatherWindow()
             if not btn then
                 btn = CreateFrame("Button", nil, pickerContent)
                 btn:SetSize(175, 20)
+                btn:SetFrameLevel(pickerContent:GetFrameLevel() + 1)
 
                 btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
                 setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
                 btn.highlight:SetAllPoints(btn)
 
                 btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                btn.text:SetPoint("LEFT", btn, "LEFT", 4, 0)
+                btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
                 btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
                 btn.text:SetJustifyH("LEFT")
                 btn.text:SetWordWrap(false)
@@ -487,9 +501,9 @@ local function BuildGatherWindow()
             btn.text:SetText(opt.name)
 
             if selectedMapID == opt.id then
-                btn.text:SetTextColor(0.70, 0.35, 0.05)
+                btn.text:SetTextColor(0.85, 0.40, 0.05)
             else
-                btn.text:SetTextColor(0.15, 0.12, 0.08)
+                btn.text:SetTextColor(0.12, 0.09, 0.05)
             end
 
             btn:SetScript("OnClick", function()
@@ -516,6 +530,7 @@ local function BuildGatherWindow()
     local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", filterBar, "BOTTOMLEFT", 8, -6)
     scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 12)
+    scroll:HookScript("OnMouseDown", CloseZonePicker)
 
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(365, 1)
