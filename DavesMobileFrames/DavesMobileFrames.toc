@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 120100, 40402, 50504, 30404, 20506, 16001, 11506
 ## Title: |cff00ccffDave's|r Mobile Frames
 ## Notes: Allows default Blizzard UI windows to be moved freely and saves their positions.
 ## Author: Dave

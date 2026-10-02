@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 120100, 40402, 50504, 30404, 20506, 16001, 11506
 ## Title: Dave's Quests
 ## Notes: Clean parchment quest tracker with Dave's Notes & Dave's Gather integration.
 ## Author: Dave

@@ -259,3 +259,651 @@ local function SellAllJunk()
     if soldCount > 0 and totalProfit > 0 then
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Bags]|r Sold " .. soldCount .. " junk items for " .. FormatMoneyString(totalProfit) .. ".")
     elseif soldCount == 0 then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Bags]|r No grey items to sell.")
+    end
+end
+
+sellJunkBtn:SetScript("OnClick", SellAllJunk)
+
+-- =========================================================
+-- Bank Snapshot Caching
+-- =========================================================
+local BANK_CONTAINERS = { -1, 6, 7, 8, 9, 10, 11, 12 }
+
+local function CacheBankItems()
+    local cache = {}
+    local total = 0
+    local free = 0
+
+    for _, bagID in ipairs(BANK_CONTAINERS) do
+        local numSlots = C_Container.GetContainerNumSlots(bagID)
+        if numSlots and numSlots > 0 then
+            local numFree = C_Container.GetContainerNumFreeSlots(bagID)
+            free = free + (numFree or 0)
+
+            for slotID = 1, numSlots do
+                total = total + 1
+                local info = C_Container.GetContainerItemInfo(bagID, slotID)
+                local link = C_Container.GetContainerItemLink(bagID, slotID)
+
+                if info then
+                    table.insert(cache, {
+                        bagID = bagID,
+                        slotID = slotID,
+                        link = link,
+                        iconFileID = info.iconFileID,
+                        stackCount = info.stackCount,
+                        quality = info.quality,
+                        itemID = info.itemID,
+                        hasItem = true
+                    })
+                else
+                    table.insert(cache, {
+                        bagID = bagID,
+                        slotID = slotID,
+                        hasItem = false
+                    })
+                end
+            end
+        end
+    end
+
+    DavesBagsDB.bankCache = cache
+    DavesBagsDB.bankTotalSlots = total
+    DavesBagsDB.bankFreeSlots = free
+    DavesBagsDB.bankLastUpdated = date("%m/%d/%y %H:%M")
+end
+
+-- =========================================================
+-- Dave's Notes Item Exporter
+-- =========================================================
+local function ExportItemToDavesNotes(link, info)
+    if type(DavesNotes_AddItemInfo) ~= "function" then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[Dave's Bags]|r Dave's Notes addon is not loaded.")
+        return false
+    end
+
+    if not link or not info then return false end
+
+    local itemName, _, itemQuality, itemLevel, reqLevel, itemType, itemSubType, _, equipSlot, _, sellPrice = C_Item.GetItemInfo(link)
+    local titleText = itemName or "Item Note"
+
+    local details = {}
+    table.insert(details, "Item: " .. link)
+    if info.stackCount and info.stackCount > 1 then
+        table.insert(details, "Count: " .. info.stackCount)
+    end
+    if itemLevel and itemLevel > 1 then
+        table.insert(details, "iLvl: " .. itemLevel)
+    end
+    if itemType then
+        local typeStr = itemType
+        if itemSubType and itemSubType ~= "" then
+            typeStr = typeStr .. " (" .. itemSubType .. ")"
+        end
+        table.insert(details, "Type: " .. typeStr)
+    end
+    if sellPrice and sellPrice > 0 then
+        table.insert(details, "Sell Price: " .. FormatMoneyString(sellPrice))
+    end
+
+    local contentText = table.concat(details, "\n")
+    local action = DavesNotes_AddItemInfo(titleText, contentText)
+
+    if action == "inserted" then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Bags]|r Inserted " .. link .. " into active note.")
+    else
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Bags]|r Created note for " .. link .. ".")
+    end
+    return true
+end
+
+-- =========================================================
+-- Category Header Labels Pool
+-- =========================================================
+local categoryHeaders = {}
+
+local function GetCategoryHeader(index)
+    if not categoryHeaders[index] then
+        local fs = BagFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetTextColor(GOLD_TEXT_COLOR[1], GOLD_TEXT_COLOR[2], GOLD_TEXT_COLOR[3])
+        fs:SetJustifyH("LEFT")
+        categoryHeaders[index] = fs
+    end
+    return categoryHeaders[index]
+end
+
+-- =========================================================
+-- Item Button Factory
+-- =========================================================
+local itemButtons = {}
+
+local function CreateBagButton(index)
+    local btn = CreateFrame("ItemButton", "DavesBagsItemSlot" .. index, BagFrame, "ContainerFrameItemButtonTemplate")
+    btn:SetSize(BUTTON_SIZE, BUTTON_SIZE)
+    btn:SetFrameStrata("DIALOG")
+    btn:SetFrameLevel(BagFrame:GetFrameLevel() + 5)
+    btn:EnableMouse(true)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+
+    btn:HookScript("PreClick", function(self, button)
+        if isShowingBank and not (BankFrame and BankFrame:IsShown()) then
+            if button == "RightButton" and IsAltKeyDown() and self._cachedLink then
+                ExportItemToDavesNotes(self._cachedLink, self._cachedInfo)
+            end
+            self._prevSlotID = self:GetID()
+            self:SetID(0)
+            return
+        end
+
+        if button == "RightButton" and IsAltKeyDown() then
+            local bagID = self:GetBagID()
+            local slotID = self:GetID()
+            if bagID and slotID then
+                local link = C_Container.GetContainerItemLink(bagID, slotID)
+                local info = C_Container.GetContainerItemInfo(bagID, slotID)
+                local success = ExportItemToDavesNotes(link, info)
+                if success then
+                    self._prevSlotID = slotID
+                    self:SetID(0)
+                end
+            end
+        end
+    end)
+
+    btn:HookScript("OnClick", function(self, button)
+        if self._prevSlotID then
+            self:SetID(self._prevSlotID)
+            self._prevSlotID = nil
+        end
+    end)
+
+    btn:HookScript("OnEnter", function(self)
+        if isShowingBank and not (BankFrame and BankFrame:IsShown()) and self._cachedLink then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink(self._cachedLink)
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("<Bank Snapshot (Cached)>", 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end
+    end)
+
+    if btn.NewItemTexture then btn.NewItemTexture:Hide() end
+    if btn.flashAnim then btn.flashAnim:Stop() end
+    if btn.newitemglowAnim then btn.newitemglowAnim:Stop() end
+    if btn.BattlepayItemTexture then btn.BattlepayItemTexture:Hide() end
+
+    return btn
+end
+
+-- =========================================================
+-- Category Evaluation Order
+-- =========================================================
+local CATEGORY_ORDER = {
+    "Equipment",
+    "Consumables",
+    "Trade Goods",
+    "Quest",
+    "Junk",
+    "Miscellaneous",
+    "Empty Slots"
+}
+
+local function CategorizeItem(info)
+    if not info or not info.hasItem then
+        return "Empty Slots"
+    end
+    if info.quality == Enum.ItemQuality.Poor or info.quality == 0 then
+        return "Junk"
+    end
+
+    local _, _, _, _, _, itemClassID = C_Item.GetItemInfoInstant(info.itemID)
+    if itemClassID == Enum.ItemClass.Weapon or itemClassID == Enum.ItemClass.Armor then
+        return "Equipment"
+    elseif itemClassID == Enum.ItemClass.Consumable then
+        return "Consumables"
+    elseif itemClassID == Enum.ItemClass.Tradegoods or itemClassID == Enum.ItemClass.Profession or itemClassID == Enum.ItemClass.Reagent then
+        return "Trade Goods"
+    elseif itemClassID == Enum.ItemClass.Questitem then
+        return "Quest"
+    end
+
+    return "Miscellaneous"
+end
+
+-- =========================================================
+-- Grid Update & Layout
+-- =========================================================
+local function UpdateBagGrid()
+    local totalSlots = 0
+    local freeSlots = 0
+    local rawSlots = {}
+
+    if not isShowingBank then
+        title:SetText("Dave's Bags")
+        for bagID = 0, 4 do
+            local numSlots = C_Container.GetContainerNumSlots(bagID)
+            local numFree = C_Container.GetContainerNumFreeSlots(bagID)
+            freeSlots = freeSlots + (numFree or 0)
+
+            for slotID = 1, numSlots do
+                totalSlots = totalSlots + 1
+                local info = C_Container.GetContainerItemInfo(bagID, slotID)
+                table.insert(rawSlots, {
+                    bagID = bagID,
+                    slotID = slotID,
+                    hasItem = (info ~= nil),
+                    iconFileID = info and info.iconFileID,
+                    stackCount = info and info.stackCount,
+                    quality = info and info.quality,
+                    isLocked = info and info.isLocked,
+                    itemID = info and info.itemID
+                })
+            end
+        end
+        slotCountLabel:SetText(string.format("%d / %d slots free", freeSlots, totalSlots))
+    else
+        local updatedText = DavesBagsDB.bankLastUpdated and (" (" .. DavesBagsDB.bankLastUpdated .. ")") or ""
+        title:SetText("Dave's Bank" .. updatedText)
+
+        local cache = DavesBagsDB.bankCache or {}
+        totalSlots = #cache
+        freeSlots = DavesBagsDB.bankFreeSlots or 0
+        rawSlots = cache
+
+        if totalSlots == 0 then
+            slotCountLabel:SetText("No bank cache yet. Visit a banker.")
+        else
+            slotCountLabel:SetText(string.format("%d / %d slots free", freeSlots, totalSlots))
+        end
+    end
+
+    for i = #itemButtons + 1, totalSlots do
+        itemButtons[i] = CreateBagButton(i)
+    end
+
+    for _, fs in ipairs(categoryHeaders) do
+        fs:Hide()
+    end
+
+    local gridWidth = (PADDING * 2) + (COLS * BUTTON_SIZE) + ((COLS - 1) * BUTTON_SPACING)
+    local buttonIndex = 1
+
+    if not isCategoryView then
+        local filledSlots = {}
+        local emptySlots = {}
+
+        for _, item in ipairs(rawSlots) do
+            if item.hasItem then
+                table.insert(filledSlots, item)
+            else
+                table.insert(emptySlots, item)
+            end
+        end
+
+        local orderedSlots = {}
+        for _, item in ipairs(filledSlots) do table.insert(orderedSlots, item) end
+        for _, item in ipairs(emptySlots) do table.insert(orderedSlots, item) end
+
+        local rows = math.max(1, math.ceil(totalSlots / COLS))
+        local totalHeight = (PADDING * 2) + HEADER_HEIGHT + FOOTER_HEIGHT + (rows * BUTTON_SIZE) + ((rows - 1) * BUTTON_SPACING) + 8
+        BagFrame:SetSize(gridWidth, totalHeight)
+
+        for i = 1, totalSlots do
+            local item = orderedSlots[i]
+            local btn = itemButtons[i]
+            btn:SetID(item.slotID or 0)
+            btn:SetBagID(item.bagID or 0)
+
+            btn._cachedLink = item.link
+            btn._cachedInfo = item
+
+            local col = (i - 1) % COLS
+            local row = math.floor((i - 1) / COLS)
+            local x = PADDING + (col * (BUTTON_SIZE + BUTTON_SPACING))
+            local y = -(PADDING + HEADER_HEIGHT + 2) - (row * (BUTTON_SIZE + BUTTON_SPACING))
+
+            btn:ClearAllPoints()
+            btn:SetPoint("TOPLEFT", BagFrame, "TOPLEFT", x, y)
+
+            if item.hasItem then
+                SetItemButtonTexture(btn, item.iconFileID)
+                SetItemButtonCount(btn, item.stackCount)
+                SetItemButtonDesaturated(btn, item.isLocked)
+
+                if item.quality and item.quality > 1 and btn.IconBorder then
+                    local r, g, b = C_Item.GetItemQualityColor(item.quality)
+                    btn.IconBorder:SetVertexColor(r, g, b, 1)
+                    btn.IconBorder:Show()
+                elseif btn.IconBorder then
+                    btn.IconBorder:Hide()
+                end
+            else
+                SetItemButtonTexture(btn, nil)
+                SetItemButtonCount(btn, 0)
+                if btn.IconBorder then btn.IconBorder:Hide() end
+            end
+
+            if btn.NewItemTexture then btn.NewItemTexture:Hide() end
+            if btn.flashAnim and btn.flashAnim:IsPlaying() then btn.flashAnim:Stop() end
+            if btn.newitemglowAnim and btn.newitemglowAnim:IsPlaying() then btn.newitemglowAnim:Stop() end
+            if btn.BattlepayItemTexture then btn.BattlepayItemTexture:Hide() end
+
+            btn:Show()
+        end
+    else
+        local groups = {}
+        for _, cat in ipairs(CATEGORY_ORDER) do groups[cat] = {} end
+
+        for _, item in ipairs(rawSlots) do
+            local cat = CategorizeItem(item)
+            table.insert(groups[cat], item)
+        end
+
+        local currentY = PADDING + HEADER_HEIGHT + 4
+        local headerIdx = 1
+
+        for _, catName in ipairs(CATEGORY_ORDER) do
+            local itemsInCat = groups[catName]
+            if #itemsInCat > 0 then
+                local catLabel = GetCategoryHeader(headerIdx)
+                headerIdx = headerIdx + 1
+                catLabel:ClearAllPoints()
+                catLabel:SetPoint("TOPLEFT", BagFrame, "TOPLEFT", PADDING + 2, -currentY)
+                catLabel:SetText(string.format("%s (%d)", catName, #itemsInCat))
+                catLabel:Show()
+
+                currentY = currentY + SECTION_HEADER_HEIGHT
+
+                for idx, item in ipairs(itemsInCat) do
+                    local btn = itemButtons[buttonIndex]
+                    btn:SetID(item.slotID or 0)
+                    btn:SetBagID(item.bagID or 0)
+
+                    btn._cachedLink = item.link
+                    btn._cachedInfo = item
+
+                    local col = (idx - 1) % COLS
+                    local row = math.floor((idx - 1) / COLS)
+                    local x = PADDING + (col * (BUTTON_SIZE + BUTTON_SPACING))
+                    local y = -currentY - (row * (BUTTON_SIZE + BUTTON_SPACING))
+
+                    btn:ClearAllPoints()
+                    btn:SetPoint("TOPLEFT", BagFrame, "TOPLEFT", x, y)
+
+                    if item.hasItem then
+                        SetItemButtonTexture(btn, item.iconFileID)
+                        SetItemButtonCount(btn, item.stackCount)
+                        SetItemButtonDesaturated(btn, item.isLocked)
+
+                        if item.quality and item.quality > 1 and btn.IconBorder then
+                            local r, g, b = C_Item.GetItemQualityColor(item.quality)
+                            btn.IconBorder:SetVertexColor(r, g, b, 1)
+                            btn.IconBorder:Show()
+                        elseif btn.IconBorder then
+                            btn.IconBorder:Hide()
+                        end
+                    else
+                        SetItemButtonTexture(btn, nil)
+                        SetItemButtonCount(btn, 0)
+                        if btn.IconBorder then btn.IconBorder:Hide() end
+                    end
+
+                    if btn.NewItemTexture then btn.NewItemTexture:Hide() end
+                    if btn.flashAnim and btn.flashAnim:IsPlaying() then btn.flashAnim:Stop() end
+                    if btn.newitemglowAnim and btn.newitemglowAnim:IsPlaying() then btn.newitemglowAnim:Stop() end
+                    if btn.BattlepayItemTexture then btn.BattlepayItemTexture:Hide() end
+
+                    btn:Show()
+                    buttonIndex = buttonIndex + 1
+                end
+
+                local catRows = math.ceil(#itemsInCat / COLS)
+                currentY = currentY + (catRows * BUTTON_SIZE) + ((catRows - 1) * BUTTON_SPACING) + 8
+            end
+        end
+
+        local totalHeight = currentY + PADDING + FOOTER_HEIGHT + 4
+        BagFrame:SetSize(gridWidth, totalHeight)
+    end
+
+    for i = totalSlots + 1, #itemButtons do
+        itemButtons[i]:Hide()
+    end
+
+    UpdateMoneyDisplay()
+end
+
+-- =========================================================
+-- Button Click Handlers
+-- =========================================================
+categoryToggleBtn:SetScript("OnClick", function()
+    isCategoryView = not isCategoryView
+    categoryToggleBtn:SetText(isCategoryView and "Slot View" or "Category View")
+    UpdateBagGrid()
+end)
+
+bankToggleBtn:SetScript("OnClick", function()
+    isShowingBank = not isShowingBank
+    bankToggleBtn:SetText(isShowingBank and "View Bags" or "View Bank")
+    UpdateBagGrid()
+end)
+
+-- =========================================================
+-- Event Handling (General, Merchant, Bank, Money)
+-- =========================================================
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("BAG_UPDATE")
+eventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_MONEY")
+eventFrame:RegisterEvent("MERCHANT_SHOW")
+eventFrame:RegisterEvent("MERCHANT_CLOSED")
+eventFrame:RegisterEvent("BANKFRAME_OPENED")
+eventFrame:RegisterEvent("BANKFRAME_CLOSED")
+eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+
+local isBankOpen = false
+
+eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_MONEY" then
+        UpdateMoneyDisplay()
+
+    elseif event == "BANKFRAME_OPENED" then
+        isBankOpen = true
+        CacheBankItems()
+        if not BagFrame:IsShown() then
+            UpdateBagGrid()
+            BagFrame:Show()
+            BagFrame:Raise()
+        elseif isShowingBank then
+            UpdateBagGrid()
+        end
+
+    elseif event == "PLAYERBANKSLOTS_CHANGED" then
+        if isBankOpen then
+            CacheBankItems()
+            if isShowingBank and BagFrame:IsShown() then
+                UpdateBagGrid()
+            end
+        end
+
+    elseif event == "BANKFRAME_CLOSED" then
+        if isBankOpen then
+            CacheBankItems()
+        end
+        isBankOpen = false
+
+        if BagFrame:IsShown() and not (MerchantFrame and MerchantFrame:IsShown()) then
+            isShowingBank = false
+            bankToggleBtn:SetText("View Bank")
+            BagFrame:Hide()
+        end
+
+    elseif event == "BAG_UPDATE_DELAYED" then
+        if isBankOpen then
+            CacheBankItems()
+        end
+        if BagFrame:IsShown() then
+            UpdateBagGrid()
+        end
+
+    elseif event == "MERCHANT_SHOW" then
+        sellJunkBtn:Show()
+        categoryToggleBtn:SetPoint("RIGHT", sellJunkBtn, "LEFT", -4, 0)
+        if not BagFrame:IsShown() then
+            isShowingBank = false
+            bankToggleBtn:SetText("View Bank")
+            UpdateBagGrid()
+            BagFrame:Show()
+            BagFrame:Raise()
+        end
+
+    elseif event == "MERCHANT_CLOSED" then
+        sellJunkBtn:Hide()
+        categoryToggleBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+
+    elseif BagFrame:IsShown() then
+        UpdateBagGrid()
+    end
+end)
+
+-- =========================================================
+-- Toggle Logic & Instant Zero-Flicker Suppression Hooks
+-- =========================================================
+local function SuppressFrame(frame)
+    if not frame or frame._davesBagsHooked then return end
+    frame._davesBagsHooked = true
+
+    frame:HookScript("OnShow", function(self)
+        self:Hide()
+    end)
+
+    if frame:IsShown() then
+        frame:Hide()
+    end
+end
+
+local function InitializeBagSuppression()
+    if ContainerFrameCombinedBags then
+        SuppressFrame(ContainerFrameCombinedBags)
+    end
+
+    if NUM_CONTAINER_FRAMES then
+        for i = 1, NUM_CONTAINER_FRAMES do
+            local f = _G["ContainerFrame" .. i]
+            if f then
+                SuppressFrame(f)
+            end
+        end
+    end
+end
+
+local function ToggleUnifiedBag()
+    if BagFrame:IsShown() then
+        BagFrame:Hide()
+    else
+        isShowingBank = false
+        bankToggleBtn:SetText("View Bank")
+        UpdateBagGrid()
+        BagFrame:Show()
+        BagFrame:Raise()
+    end
+end
+
+SLASH_DAVESBAGS1 = "/dbags"
+SLASH_DAVESBAGS2 = "/davesbags"
+SlashCmdList["DAVESBAGS"] = ToggleUnifiedBag
+
+hooksecurefunc("ToggleBackpack", function()
+    ToggleUnifiedBag()
+end)
+
+hooksecurefunc("ToggleAllBags", function()
+    ToggleUnifiedBag()
+end)
+
+hooksecurefunc("OpenAllBags", function()
+    if not BagFrame:IsShown() then
+        ToggleUnifiedBag()
+    end
+end)
+
+if MainMenuBarBackpackButton then
+    MainMenuBarBackpackButton:HookScript("OnClick", function(self, button)
+        if button == "LeftButton" then
+            ToggleUnifiedBag()
+        end
+    end)
+end
+
+if BagBarExpandButton then
+    BagBarExpandButton:HookScript("OnClick", function()
+        ToggleUnifiedBag()
+    end)
+end
+
+InitializeBagSuppression()
+
+-- =========================================================
+-- Tooltip Integrations (Dave's Gather & Dave's Quests)
+-- =========================================================
+local TOOLTIP_CHECK = "|TInterface\\RAIDFRAME\\ReadyCheck-Ready:14:14:0:0|t"
+local TOOLTIP_NEED  = "|TInterface\\Buttons\\UI-CheckBox-Up:13:13:0:0|t"
+
+local function AppendDavesSuiteTooltipInfo(tooltip, data)
+    if not tooltip or tooltip:IsForbidden() then return end
+
+    local itemName = nil
+    if data and data.lines and data.lines[1] then
+        itemName = data.lines[1].leftText
+    end
+
+    if not itemName then return end
+
+    -- 1. Dave's Quests Requirement Check
+    if type(DavesQuests_GetItemQuestRequirements) == "function" then
+        local questReqs = DavesQuests_GetItemQuestRequirements(itemName)
+        if questReqs and #questReqs > 0 then
+            tooltip:AddLine(" ")
+            tooltip:AddLine("Active Quest Requirement (Dave's Quests):", 1, 0.82, 0.30)
+            for _, req in ipairs(questReqs) do
+                local icon = req.finished and (TOOLTIP_CHECK .. " |cff00cc00") or (TOOLTIP_NEED .. " |cffffd100")
+                tooltip:AddLine(string.format(" %s[%d] %s:|r |cffffffff%s|r", icon, req.questLevel, req.questTitle, req.objectiveText), 0.95, 0.85, 0.65)
+            end
+        end
+    end
+
+    -- 2. Dave's Gather Hotspot Check
+    if type(DavesGather_GetLocationsForItem) == "function" then
+        local locations = DavesGather_GetLocationsForItem(itemName)
+        if locations and #locations > 0 then
+            tooltip:AddLine(" ")
+            tooltip:AddLine("Gather Locations (Dave's Gather):", 1, 0.82, 0.30)
+            local maxShow = math.min(3, #locations)
+            for i = 1, maxShow do
+                local loc = locations[i]
+                tooltip:AddLine(string.format(" • %s: %s (|cffffd100x%d|r)", loc.zone, loc.subZone, loc.count), 0.90, 0.85, 0.70)
+            end
+            if #locations > maxShow then
+                tooltip:AddLine(string.format("   ...and %d more spots (see /dgather)", #locations - maxShow), 0.6, 0.6, 0.6)
+            end
+        end
+    end
+
+    tooltip:Show()
+end
+
+if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall then
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, AppendDavesSuiteTooltipInfo)
+else
+    GameTooltip:HookScript("OnTooltipSetItem", function(self)
+        local _, link = self:GetItem()
+        if link then
+            local name = C_Item.GetItemInfo(link)
+            if name then
+                AppendDavesSuiteTooltipInfo(self, { lines = { { leftText = name } } })
+            end
+        end
+    end)
+end

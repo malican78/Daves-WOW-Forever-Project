@@ -44,6 +44,23 @@ local TRACKED_CLOTH = {
     ["Runecloth"] = true,
     ["Felcloth"] = true,
     ["Mooncloth"] = true,
+    ["Netherweave Cloth"] = true,
+    ["Frostweave Cloth"] = true,
+    ["Embersilk Cloth"] = true,
+    ["Windwool Cloth"] = true,
+    ["Sumptuous Fur"] = true,
+    ["Shal'dorei Silk"] = true,
+    ["Tidespray Linen"] = true,
+    ["Deep Sea Satin"] = true,
+    ["Shrouded Cloth"] = true,
+    ["Lightless Silk"] = true,
+    ["Wildercloth"] = true,
+    ["Weavercloth"] = true,
+    ["Spool of Weavercloth"] = true,
+    ["Duskweave"] = true,
+    ["Spool of Duskweave"] = true,
+    ["Dawnweave"] = true,
+    ["Spool of Dawnweave"] = true,
 }
 
 
@@ -734,7 +751,7 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, ...)
             lastGatherTime = GetTime()
         end
 
-elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
+    elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
         local maxWait = (lastGatherSpell == "Fishing") and 22 or 3.5
         
         -- Scenario A: Standard node gather logic
@@ -754,7 +771,7 @@ elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
             local numItems = GetNumLootItems()
             for i = 1, numItems do
                 local icon, name = GetLootSlotInfo(i)
-                if name and TRACKED_CLOTH[name] then
+                if name and (TRACKED_CLOTH[name] or (string.find(name, "Cloth") and not (string.find(name, "Boots") or string.find(name, "Robe") or string.find(name, "Belt") or string.find(name, "Vest") or string.find(name, "Pants") or string.find(name, "Gloves")))) then
                     -- Temporarily override profession context for the database record
                     lastGatherSpell = "Mob Drop"
                     RecordGatheredNode(name, icon)
@@ -762,3 +779,11 @@ elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
                 end
             end
         end
+
+    elseif event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
+        RefreshWorldMapPins()
+        if gatherWindow and gatherWindow:IsShown() then
+            gatherWindow:RefreshList()
+        end
+    end
+end)
