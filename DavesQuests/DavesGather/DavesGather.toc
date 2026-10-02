@@ -1,9 +1,0 @@
-## Interface: 120100, 40402, 50504, 30404, 20506, 16001, 11506
-## Title: Dave's Gather
-## Notes: Lightweight gathering tracker with World Map pins and Dave's Notes integration.
-## Author: Dave
-## Version: 1.0.0
-## SavedVariables: DavesGatherDB
-## IconTexture: Interface\AddOns\DavesGather\icon.png
-
-DavesGather.lua

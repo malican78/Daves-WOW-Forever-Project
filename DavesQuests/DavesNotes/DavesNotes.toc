@@ -1,9 +1,0 @@
-## Interface: 120100, 40402, 50504, 30404, 20506, 16001, 11506
-## Title: Dave's Notes
-## Notes: Lightweight multi-window notepad and journal.
-## Author: Dave
-## Version: 1.0.0
-## SavedVariables: DavesNotesDB
-## IconTexture: Interface\AddOns\DavesNotes\icon.png
-
-DavesNotes.lua
