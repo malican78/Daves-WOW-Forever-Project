@@ -445,12 +445,17 @@ end
 -- Hook up map pins dropdown to World Map
 local function InitWorldMapDropdown()
     local anchor = WorldMapFrameMaximizeMinimizeButton or WorldMapFrameSizeDownButton or WorldMapFrameCloseButton
+    local parent = anchor and anchor:GetParent() or WorldMapFrame
     local btn, menu
     if anchor then
-        btn, menu = CreateMapPinsDropdown(WorldMapFrame, anchor, "RIGHT", "LEFT", -10, 0, 100)
+        btn, menu = CreateMapPinsDropdown(parent, anchor, "RIGHT", "LEFT", -10, 0, 9000)
     else
-        btn, menu = CreateMapPinsDropdown(WorldMapFrame, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -75, -4, 100)
+        btn, menu = CreateMapPinsDropdown(parent, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -75, -4, 9000)
     end
+    
+    -- Ensure the button draws fully above the map's artwork
+    btn:SetFrameStrata("TOOLTIP")
+    
     WorldMapFrame:HookScript("OnHide", function() menu:Hide() end)
     WorldMapFrame:HookScript("OnMouseDown", function() menu:Hide() end)
 end
