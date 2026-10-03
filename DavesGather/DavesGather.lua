@@ -349,9 +349,9 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     if level then optionsBtn:SetFrameLevel(level) end
 
     local optionsMenu = CreateFrame("Frame", nil, parent)
-    optionsMenu:SetSize(165, 120)
+    optionsMenu:SetSize(165, 142)
     optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, -2)
-    optionsMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+    optionsMenu:SetFrameStrata("TOOLTIP")
     optionsMenu:SetToplevel(true)
     optionsMenu:SetFrameLevel(250)
     optionsMenu:EnableMouse(true)
@@ -391,11 +391,29 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
         if RefreshWorldMapPins then RefreshWorldMapPins() end
     end
 
+    local function ToggleAllFilters()
+        local filters = GetFilters()
+        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showOther
+        local newState = not anyOn
+        
+        filters.showOre = newState
+        filters.showHerb = newState
+        filters.showCloth = newState
+        filters.showOther = newState
+        if newState then filters.showPins = true end
+        
+        UpdateAllMenus()
+        if RefreshWorldMapPins then RefreshWorldMapPins() end
+    end
+
     local toggleMaster = CreateMenuItem(-5, function() ToggleFilter("showPins") end)
     local toggleOre = CreateMenuItem(-27, function() ToggleFilter("showOre") end)
     local toggleHerb = CreateMenuItem(-49, function() ToggleFilter("showHerb") end)
     local toggleCloth = CreateMenuItem(-71, function() ToggleFilter("showCloth") end)
     local toggleOther = CreateMenuItem(-93, function() ToggleFilter("showOther") end)
+    local toggleAllBtn = CreateMenuItem(-115, ToggleAllFilters)
+    
+    toggleAllBtn.text:SetTextColor(0.85, 0.70, 0.40) -- Gold-ish color to stand out
 
     local function UpdateMenu()
         local filters = GetFilters()
@@ -407,6 +425,9 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
         toggleHerb.text:SetText(GetText("showHerb", "Flowers (Herbalism)"))
         toggleCloth.text:SetText(GetText("showCloth", "Cloth (Mob Drops)"))
         toggleOther.text:SetText(GetText("showOther", "Others (Fishing, etc)"))
+
+        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showOther
+        toggleAllBtn.text:SetText(anyOn and "   [ Deselect All Categories ]" or "   [ Select All Categories ]")
     end
     table.insert(menuUpdateFuncs, UpdateMenu)
 
@@ -423,7 +444,13 @@ end
 
 -- Hook up map pins dropdown to World Map
 local function InitWorldMapDropdown()
-    local btn, menu = CreateMapPinsDropdown(WorldMapFrame, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -45, -20, 100)
+    local anchor = WorldMapFrameMaximizeMinimizeButton or WorldMapFrameSizeDownButton or WorldMapFrameCloseButton
+    local btn, menu
+    if anchor then
+        btn, menu = CreateMapPinsDropdown(WorldMapFrame, anchor, "RIGHT", "LEFT", -10, 0, 100)
+    else
+        btn, menu = CreateMapPinsDropdown(WorldMapFrame, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -75, -4, 100)
+    end
     WorldMapFrame:HookScript("OnHide", function() menu:Hide() end)
     WorldMapFrame:HookScript("OnMouseDown", function() menu:Hide() end)
 end

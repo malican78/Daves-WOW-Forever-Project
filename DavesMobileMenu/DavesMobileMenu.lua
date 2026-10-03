@@ -86,24 +86,17 @@ MenuFrame:SetScript("OnDragStop", function(self)
     DavesMobileMenuDB.y = y
 end)
 
--- Branding Avatar Logo / Drag Handle
-local logo = MenuFrame:CreateTexture(nil, "ARTWORK")
-logo:SetSize(28, 28)
-logo:SetPoint("LEFT", MenuFrame, "LEFT", 6, 0)
-logo:SetTexture("Interface\\AddOns\\DavesMobileMenu\\icon.png")
-
 -- Layout Refresh
 local BUTTON_SIZE = 28
 local BUTTON_SPACING = 5
 local PADDING = 6
-local LOGO_WIDTH = 34
 
 local function RefreshMenuLayout()
     local count = #registeredButtons
-    local totalWidth = LOGO_WIDTH + PADDING + (count * (BUTTON_SIZE + BUTTON_SPACING)) + PADDING
+    local totalWidth = PADDING + (count * BUTTON_SIZE) + (math.max(0, count - 1) * BUTTON_SPACING) + PADDING
     local totalHeight = BUTTON_SIZE + (PADDING * 2)
 
-    MenuFrame:SetSize(math.max(70, totalWidth), totalHeight)
+    MenuFrame:SetSize(math.max(50, totalWidth), totalHeight)
 
     for i = 1, count do
         local data = registeredButtons[i]
@@ -144,7 +137,7 @@ local function RefreshMenuLayout()
         btn.data = data
         btn.icon:SetTexture(data.icon or 134400)
         btn:ClearAllPoints()
-        btn:SetPoint("LEFT", MenuFrame, "LEFT", LOGO_WIDTH + ((i - 1) * (BUTTON_SIZE + BUTTON_SPACING)), 0)
+        btn:SetPoint("LEFT", MenuFrame, "LEFT", PADDING + ((i - 1) * (BUTTON_SIZE + BUTTON_SPACING)), 0)
 
         btn:SetScript("OnClick", function(self)
             if self.data and type(self.data.toggleFunc) == "function" then
