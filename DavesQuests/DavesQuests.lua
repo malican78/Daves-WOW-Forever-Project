@@ -21,6 +21,7 @@ local function InitDB()
     if DavesQuestsDB.hideBlizzTracker == nil then DavesQuestsDB.hideBlizzTracker = true end
     if DavesQuestsDB.showHUDTracker == nil then DavesQuestsDB.showHUDTracker = true end
     if DavesQuestsDB.showMapPane == nil then DavesQuestsDB.showMapPane = true end
+    if DavesQuestsDB.revealAllMap == nil then DavesQuestsDB.revealAllMap = false end
     if DavesQuestsDB.hudX == nil then DavesQuestsDB.hudX = -15 end
     if DavesQuestsDB.hudY == nil then DavesQuestsDB.hudY = -180 end
     if DavesQuestsDB.hudPoint == nil then DavesQuestsDB.hudPoint = "TOPRIGHT" end
@@ -40,6 +41,7 @@ local BASE_MAP_WIDTH = 418
 local BASE_MAP_HEIGHT = 314
 
 local mapTilePool = {}
+local mapExplorationTilePool = {}
 local questPinPool = {}
 local gatherPinPool = {}
 local playerPin = nil
@@ -48,10 +50,14 @@ local mapScrollFrame = nil
 local mapCanvas = nil
 local mapTitle = nil
 local zoomText = nil
+local btnUncover = nil
 local mapDetailsText = nil
 local mapFallbackBg = nil
 local questAreaGlow = nil
 local questAreaRing = nil
+local questAreaDotted = nil
+local questAreaMobTag = nil
+local questAreaMobText = nil
 
 -- Forward declarations
 local ToggleQuestWindow
@@ -61,6 +67,7 @@ local LoadZoneMap
 local ZoomMap
 local RefreshMapPins
 local CreateQuestAreaGlow
+local UpdateQuestAreaGlow
 local SuppressBlizzardTracker
 local BuildHUDTracker
 local BuildQuestWindow
@@ -655,6 +662,14 @@ local function GetMapTileTexture(index)
     return mapTilePool[index]
 end
 
+local function GetExplorationTileTexture(index)
+    if not mapExplorationTilePool[index] then
+        local t = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -4)
+        mapExplorationTilePool[index] = t
+    end
+    return mapExplorationTilePool[index]
+end
+
 -- Completely Round Quest Pin Generator
 local function GetQuestPin(index)
     if not questPinPool[index] then
@@ -754,6 +769,23 @@ local function RefreshGatherPins(canvasW, canvasH)
     local pinIdx = 1
     local maxGatherPins = 35
 
+    -- Check if selected quest has an objective mentioning gather resources or drops
+    local activeMatchText = nil
+    if selectedQuestID then
+        local allQuests = GetAllQuests()
+        for _, q in ipairs(allQuests) do
+            if q.questID == selectedQuestID and q.objectives then
+                for _, obj in ipairs(q.objectives) do
+                    if not obj.finished and obj.text then
+                        activeMatchText = string.lower(obj.text)
+                        break
+                    end
+                end
+                break
+            end
+        end
+    end
+
     for i = 1, math.min(#nodes, maxGatherPins) do
         local node = nodes[i]
         if node.x and node.y and node.x > 0 and node.y > 0 then
@@ -762,6 +794,24 @@ local function RefreshGatherPins(canvasW, canvasH)
             p.icon:SetTexture(node.icon or 134400)
             p:ClearAllPoints()
             p:SetPoint("CENTER", mapCanvas, "TOPLEFT", node.x * canvasW, -node.y * canvasH)
+
+            -- Highlight node if matching active quest objective
+            local isMatch = false
+            if activeMatchText and node.name then
+                local nodeName = string.lower(node.name)
+                if string.find(activeMatchText, nodeName, 1, true) or string.find(nodeName, activeMatchText, 1, true) then
+                    isMatch = true
+                end
+            end
+
+            if isMatch then
+                p:SetSize(22, 22)
+                p.border:SetVertexColor(1.0, 0.85, 0.20, 1.0)
+            else
+                p:SetSize(16, 16)
+                p.border:SetVertexColor(0.2, 0.9, 0.2, 0.85)
+            end
+
             p:Show()
             pinIdx = pinIdx + 1
         end
@@ -775,19 +825,115 @@ end
 function CreateQuestAreaGlow()
     if questAreaGlow then return end
 
-    questAreaGlow = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -2)
+    -- 1. Inner glowing core beacon
+    questAreaGlow = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -3)
     questAreaGlow:SetTexture("Interface\\Calendar\\EventNotificationGlow")
     questAreaGlow:SetBlendMode("ADD")
     questAreaGlow:SetVertexColor(0.20, 0.65, 1.0, 0.65)
-    questAreaGlow:SetSize(76, 76)
+    questAreaGlow:SetSize(114, 114)
     questAreaGlow:Hide()
 
-    questAreaRing = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -1)
+    -- 2. Outer mob objective territory perimeter ring
+    questAreaRing = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -2)
     questAreaRing:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
     questAreaRing:SetBlendMode("ADD")
-    questAreaRing:SetVertexColor(0.35, 0.80, 1.0, 0.85)
-    questAreaRing:SetSize(82, 82)
+    questAreaRing:SetVertexColor(0.35, 0.85, 1.0, 0.90)
+    questAreaRing:SetSize(124, 124)
     questAreaRing:Hide()
+
+    -- 3. Dotted boundary radar border
+    questAreaDotted = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -2)
+    questAreaDotted:SetTexture("Interface\\Buttons\\UI-RadioButton")
+    questAreaDotted:SetTexCoord(0, 0.25, 0, 1)
+    questAreaDotted:SetBlendMode("ADD")
+    questAreaDotted:SetVertexColor(0.50, 0.90, 1.0, 0.45)
+    questAreaDotted:SetSize(132, 132)
+    questAreaDotted:Hide()
+
+    -- 4. Objective Mob Tag Badge (shows mob or objective name beneath the territory outline)
+    questAreaMobTag = CreateFrame("Frame", nil, mapCanvas)
+    questAreaMobTag:SetSize(130, 20)
+    questAreaMobTag:SetFrameLevel(mapCanvas:GetFrameLevel() + 5)
+
+    questAreaMobTag.bg = questAreaMobTag:CreateTexture(nil, "BACKGROUND")
+    setTextureColor(questAreaMobTag.bg, 0.12, 0.09, 0.06, 0.85)
+    questAreaMobTag.bg:SetAllPoints(questAreaMobTag)
+    createBorder(questAreaMobTag, { 0.48, 0.36, 0.22 }, 1)
+
+    questAreaMobText = questAreaMobTag:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    questAreaMobText:SetPoint("CENTER", questAreaMobTag, "CENTER", 0, 0)
+    questAreaMobText:SetTextColor(1, 0.85, 0.35)
+    questAreaMobTag:Hide()
+end
+
+function UpdateQuestAreaGlow(pin, questData)
+    CreateQuestAreaGlow()
+    if not pin or not questData then
+        if questAreaGlow then questAreaGlow:Hide() end
+        if questAreaRing then questAreaRing:Hide() end
+        if questAreaDotted then questAreaDotted:Hide() end
+        if questAreaMobTag then questAreaMobTag:Hide() end
+        return
+    end
+
+    local baseSize = 114 * math.min(1.8, math.max(1.0, zoomLevel * 0.85))
+
+    -- Anchor directly to pin center: prevents drift regardless of zoom level, scroll, or resize
+    questAreaGlow:ClearAllPoints()
+    questAreaGlow:SetPoint("CENTER", pin, "CENTER", 0, 0)
+    questAreaGlow:SetSize(baseSize, baseSize)
+
+    questAreaRing:ClearAllPoints()
+    questAreaRing:SetPoint("CENTER", pin, "CENTER", 0, 0)
+    questAreaRing:SetSize(baseSize + 10, baseSize + 10)
+
+    questAreaDotted:ClearAllPoints()
+    questAreaDotted:SetPoint("CENTER", pin, "CENTER", 0, 0)
+    questAreaDotted:SetSize(baseSize + 18, baseSize + 18)
+
+    questAreaMobTag:ClearAllPoints()
+    questAreaMobTag:SetPoint("TOP", pin, "BOTTOM", 0, -(baseSize * 0.5) - 4)
+
+    if questData.isComplete then
+        questAreaGlow:SetVertexColor(0.20, 0.95, 0.35, 0.65)
+        questAreaRing:SetVertexColor(0.35, 1.0, 0.45, 0.90)
+        questAreaDotted:SetVertexColor(0.50, 1.0, 0.60, 0.45)
+        questAreaMobText:SetText(ICON_CHECK .. " |cff55ff55Ready for turn-in!|r")
+    else
+        questAreaGlow:SetVertexColor(0.20, 0.65, 1.0, 0.65)
+        questAreaRing:SetVertexColor(0.35, 0.85, 1.0, 0.90)
+        questAreaDotted:SetVertexColor(0.50, 0.90, 1.0, 0.45)
+
+        local mobDesc = nil
+        if questData.objectives and #questData.objectives > 0 then
+            for _, obj in ipairs(questData.objectives) do
+                if not obj.finished and obj.text and obj.text ~= "" then
+                    mobDesc = obj.text
+                    break
+                end
+            end
+            if not mobDesc and questData.objectives[1] then
+                mobDesc = questData.objectives[1].text
+            end
+        end
+
+        if not mobDesc or mobDesc == "" then
+            mobDesc = questData.title or "Quest Objective"
+        end
+
+        if #mobDesc > 26 then
+            mobDesc = string.sub(mobDesc, 1, 24) .. "..."
+        end
+        questAreaMobText:SetText(string.format("|cffffd100%s|r", mobDesc))
+    end
+
+    local textW = questAreaMobText:GetStringWidth() or 90
+    questAreaMobTag:SetWidth(math.max(110, textW + 16))
+
+    questAreaGlow:Show()
+    questAreaRing:Show()
+    questAreaDotted:Show()
+    questAreaMobTag:Show()
 end
 
 function RefreshMapPins()
@@ -805,6 +951,9 @@ function RefreshMapPins()
     end
 
     local pinIdx = 1
+    local selectedPin = nil
+    local selectedPinData = nil
+
     for _, mq in ipairs(mapQuests) do
         local qInfo = questLookup[mq.questID]
         local pin = GetQuestPin(pinIdx)
@@ -824,6 +973,8 @@ function RefreshMapPins()
         if selectedQuestID and selectedQuestID == mq.questID then
             pin.highlight:Show()
             pin:SetSize(28, 28)
+            selectedPin = pin
+            selectedPinData = qInfo and qInfo.data
         else
             pin.highlight:Hide()
             pin:SetSize(22, 22)
@@ -835,6 +986,13 @@ function RefreshMapPins()
 
     for i = pinIdx, #questPinPool do
         questPinPool[i]:Hide()
+    end
+
+    -- Update Quest Mob Area Glow & Perimeter Ring (anchored firmly to selectedPin)
+    if selectedPin and selectedPinData then
+        UpdateQuestAreaGlow(selectedPin, selectedPinData)
+    else
+        UpdateQuestAreaGlow(nil, nil)
     end
 
     -- Update Player Position Pin
@@ -887,19 +1045,32 @@ function ZoomMap(newZoom, targetNormX, targetNormY)
         if zoomLevel == 1.0 then
             mapScrollFrame:SetHorizontalScroll(0)
             mapScrollFrame:SetVerticalScroll(0)
-        elseif targetNormX and targetNormY then
-            local targetScrollX = math.max(0, math.min(maxScrollX, targetNormX * newW - mapScrollFrame:GetWidth() / 2))
-            local targetScrollY = math.max(0, math.min(maxScrollY, targetNormY * newH - mapScrollFrame:GetHeight() / 2))
-            mapScrollFrame:SetHorizontalScroll(targetScrollX)
-            mapScrollFrame:SetVerticalScroll(targetScrollY)
         else
-            local ratio = zoomLevel / math.max(1.0, oldZoom)
-            local curScrollX = mapScrollFrame:GetHorizontalScroll()
-            local curScrollY = mapScrollFrame:GetVerticalScroll()
-            local newScrollX = math.max(0, math.min(maxScrollX, (curScrollX + mapScrollFrame:GetWidth() / 2) * ratio - mapScrollFrame:GetWidth() / 2))
-            local newScrollY = math.max(0, math.min(maxScrollY, (curScrollY + mapScrollFrame:GetHeight() / 2) * ratio - mapScrollFrame:GetHeight() / 2))
-            mapScrollFrame:SetHorizontalScroll(newScrollX)
-            mapScrollFrame:SetVerticalScroll(newScrollY)
+            if not targetNormX and selectedQuestID and currentMapID then
+                local mapQuests = GetQuestsOnCurrentMap(currentMapID)
+                for _, mq in ipairs(mapQuests) do
+                    if mq.questID == selectedQuestID then
+                        targetNormX = mq.x
+                        targetNormY = mq.y
+                        break
+                    end
+                end
+            end
+
+            if targetNormX and targetNormY then
+                local targetScrollX = math.max(0, math.min(maxScrollX, targetNormX * newW - mapScrollFrame:GetWidth() / 2))
+                local targetScrollY = math.max(0, math.min(maxScrollY, targetNormY * newH - mapScrollFrame:GetHeight() / 2))
+                mapScrollFrame:SetHorizontalScroll(targetScrollX)
+                mapScrollFrame:SetVerticalScroll(targetScrollY)
+            else
+                local ratio = zoomLevel / math.max(1.0, oldZoom)
+                local curScrollX = mapScrollFrame:GetHorizontalScroll()
+                local curScrollY = mapScrollFrame:GetVerticalScroll()
+                local newScrollX = math.max(0, math.min(maxScrollX, (curScrollX + mapScrollFrame:GetWidth() / 2) * ratio - mapScrollFrame:GetWidth() / 2))
+                local newScrollY = math.max(0, math.min(maxScrollY, (curScrollY + mapScrollFrame:GetHeight() / 2) * ratio - mapScrollFrame:GetHeight() / 2))
+                mapScrollFrame:SetHorizontalScroll(newScrollX)
+                mapScrollFrame:SetVerticalScroll(newScrollY)
+            end
         end
     end
 end
@@ -919,17 +1090,23 @@ function LoadZoneMap(mapID, keepZoom)
     end
 
     local loadedTiles = false
+    local canvasW = mapCanvas:GetWidth()
+    local canvasH = mapCanvas:GetHeight()
+    local layerW = 1002
+    local layerH = 668
+
+    -- 1. Base detail tiles
     if C_Map and C_Map.GetMapArtLayers and C_Map.GetMapArtLayerTextures and mapCanvas then
         local layers = C_Map.GetMapArtLayers(mapID)
         if layers and layers[1] then
             local lInfo = layers[1]
+            layerW = (lInfo.layerWidth and lInfo.layerWidth > 0) and lInfo.layerWidth or 1002
+            layerH = (lInfo.layerHeight and lInfo.layerHeight > 0) and lInfo.layerHeight or 668
             local rows = lInfo.numDetailTilesRows or 3
             local cols = lInfo.numDetailTilesCols or 4
             local textures = C_Map.GetMapArtLayerTextures(mapID, 1)
 
             if textures and #textures > 0 then
-                local canvasW = mapCanvas:GetWidth()
-                local canvasH = mapCanvas:GetHeight()
                 local tileW = canvasW / cols
                 local tileH = canvasH / rows
 
@@ -957,9 +1134,61 @@ function LoadZoneMap(mapID, keepZoom)
         end
     end
 
+    -- 2. Exploration / Uncovered Overlay Tiles (Reveals uncovered subzones on the map)
+    local expIdx = 1
+    if C_MapExplorationInfo and C_MapExplorationInfo.GetExploredMapTextures and mapCanvas then
+        local scaleX = canvasW / layerW
+        local scaleY = canvasH / layerH
+
+        -- Render player's explored/uncovered subzones
+        local okExp, exploredTextures = pcall(C_MapExplorationInfo.GetExploredMapTextures, mapID)
+        if okExp and exploredTextures and #exploredTextures > 0 then
+            for _, exp in ipairs(exploredTextures) do
+                local texID = exp.fileDataID or exp.textureFileID or exp.texture or exp.textureID
+                if texID then
+                    local t = GetExplorationTileTexture(expIdx)
+                    t:ClearAllPoints()
+                    t:SetPoint("TOPLEFT", mapCanvas, "TOPLEFT", (exp.offsetX or 0) * scaleX, -(exp.offsetY or 0) * scaleY)
+                    t:SetSize((exp.textureWidth or 256) * scaleX, (exp.textureHeight or 256) * scaleY)
+                    t:SetTexture(texID)
+                    t:SetAlpha(1.0)
+                    t:Show()
+                    expIdx = expIdx + 1
+                    loadedTiles = true
+                end
+            end
+        end
+
+        -- If full map reveal is toggled on, also render unexplored tiles
+        if DavesQuestsDB.revealAllMap and C_MapExplorationInfo.GetUnexploredMapTextures then
+            local okUnexp, unexploredTextures = pcall(C_MapExplorationInfo.GetUnexploredMapTextures, mapID)
+            if okUnexp and unexploredTextures and #unexploredTextures > 0 then
+                for _, unexp in ipairs(unexploredTextures) do
+                    local texID = unexp.fileDataID or unexp.textureFileID or unexp.texture or unexp.textureID
+                    if texID then
+                        local t = GetExplorationTileTexture(expIdx)
+                        t:ClearAllPoints()
+                        t:SetPoint("TOPLEFT", mapCanvas, "TOPLEFT", (unexp.offsetX or 0) * scaleX, -(unexp.offsetY or 0) * scaleY)
+                        t:SetSize((unexp.textureWidth or 256) * scaleX, (unexp.textureHeight or 256) * scaleY)
+                        t:SetTexture(texID)
+                        t:SetAlpha(0.60)
+                        t:Show()
+                        expIdx = expIdx + 1
+                    end
+                end
+            end
+        end
+    end
+
+    -- Hide unused exploration overlay tiles
+    for i = expIdx, #mapExplorationTilePool do
+        mapExplorationTilePool[i]:Hide()
+    end
+
     if mapFallbackBg then
         if not loadedTiles then
             for _, t in ipairs(mapTilePool) do t:Hide() end
+            for _, t in ipairs(mapExplorationTilePool) do t:Hide() end
             mapFallbackBg:Show()
         else
             mapFallbackBg:Hide()
@@ -989,7 +1218,7 @@ function SelectQuest(questID)
             RefreshMapPins()
         end
 
-        -- Find coordinates for glowing area and auto-center
+        -- Auto-center on quest coordinates if zoomed in
         local mapQuests = GetQuestsOnCurrentMap(currentMapID)
         local targetX, targetY = nil, nil
         for _, mq in ipairs(mapQuests) do
@@ -1000,38 +1229,8 @@ function SelectQuest(questID)
             end
         end
 
-        if targetX and targetY and mapCanvas then
-            CreateQuestAreaGlow()
-            local cw = mapCanvas:GetWidth()
-            local ch = mapCanvas:GetHeight()
-            local glowSize = 74 * math.min(1.5, math.max(1.0, zoomLevel * 0.75))
-
-            questAreaGlow:SetSize(glowSize, glowSize)
-            questAreaRing:SetSize(glowSize + 8, glowSize + 8)
-
-            questAreaGlow:ClearAllPoints()
-            questAreaGlow:SetPoint("CENTER", mapCanvas, "TOPLEFT", targetX * cw, -targetY * ch)
-            questAreaRing:ClearAllPoints()
-            questAreaRing:SetPoint("CENTER", mapCanvas, "TOPLEFT", targetX * cw, -targetY * ch)
-
-            if selectedData.isComplete then
-                questAreaGlow:SetVertexColor(0.25, 0.90, 0.30, 0.65)
-                questAreaRing:SetVertexColor(0.35, 1.0, 0.40, 0.85)
-            else
-                questAreaGlow:SetVertexColor(0.20, 0.65, 1.0, 0.65)
-                questAreaRing:SetVertexColor(0.35, 0.80, 1.0, 0.85)
-            end
-
-            questAreaGlow:Show()
-            questAreaRing:Show()
-
-            -- Auto-center on quest coordinates if zoomed in
-            if zoomLevel > 1.0 then
-                ZoomMap(zoomLevel, targetX, targetY)
-            end
-        else
-            if questAreaGlow then questAreaGlow:Hide() end
-            if questAreaRing then questAreaRing:Hide() end
+        if targetX and targetY and zoomLevel > 1.0 then
+            ZoomMap(zoomLevel, targetX, targetY)
         end
 
         -- Update bottom card details
@@ -1159,6 +1358,23 @@ function BuildQuestWindow()
         SuppressBlizzardTracker()
     end)
 
+    -- Toggle 4: Reveal Entire Map
+    local revealCheck = CreateFrame("CheckButton", "DavesQuestsRevealCheck", optionsBar, "UICheckButtonTemplate")
+    revealCheck:SetSize(22, 22)
+    revealCheck:SetPoint("LEFT", blizzCheck, "RIGHT", 130, 0)
+    _G[revealCheck:GetName() .. "Text"]:SetText("Reveal Entire Map")
+    _G[revealCheck:GetName() .. "Text"]:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
+    revealCheck:SetChecked(DavesQuestsDB.revealAllMap == true)
+    revealCheck:SetScript("OnClick", function(self)
+        DavesQuestsDB.revealAllMap = self:GetChecked()
+        if btnUncover and btnUncover.UpdateText then
+            btnUncover:UpdateText()
+        end
+        if currentMapID then
+            LoadZoneMap(currentMapID, true)
+        end
+    end)
+
     -- =========================================================
     -- Left Pane: Quest Map Panel with Zooming & Panning
     -- =========================================================
@@ -1202,48 +1418,8 @@ function BuildQuestWindow()
         LoadZoneMap(maps[nextIdx])
     end)
 
-    mapTitle = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    mapTitle:SetPoint("LEFT", btnNext, "RIGHT", 6, 0)
-    mapTitle:SetPoint("RIGHT", mapTopBar, "RIGHT", -210, 0)
-    mapTitle:SetJustifyH("LEFT")
-    mapTitle:SetText("Zone Map")
-
-    -- Zoom Controls: [-] [100%] [+]
-    local btnZoomOut = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnZoomOut:SetSize(18, 20)
-    btnZoomOut:SetPoint("RIGHT", mapTopBar, "RIGHT", -190, 0)
-    btnZoomOut:SetText("-")
-    btnZoomOut:SetScript("OnClick", function()
-        ZoomMap(zoomLevel - 0.25)
-    end)
-
-    zoomText = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    zoomText:SetPoint("LEFT", btnZoomOut, "RIGHT", 2, 0)
-    zoomText:SetSize(36, 20)
-    zoomText:SetJustifyH("CENTER")
-    zoomText:SetText("100%")
-
-    local btnZoomIn = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnZoomIn:SetSize(18, 20)
-    btnZoomIn:SetPoint("LEFT", zoomText, "RIGHT", 2, 0)
-    btnZoomIn:SetText("+")
-    btnZoomIn:SetScript("OnClick", function()
-        ZoomMap(zoomLevel + 0.25)
-    end)
-
-    local btnMyZone = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnMyZone:SetSize(62, 20)
-    btnMyZone:SetPoint("RIGHT", mapTopBar, "RIGHT", -64, 0)
-    btnMyZone:SetText("My Zone")
-    btnMyZone:SetScript("OnClick", function()
-        if C_Map and C_Map.GetBestMapForUnit then
-            local pMap = C_Map.GetBestMapForUnit("player")
-            if pMap then LoadZoneMap(pMap) end
-        end
-    end)
-
     local btnFullMap = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnFullMap:SetSize(62, 20)
+    btnFullMap:SetSize(58, 20)
     btnFullMap:SetPoint("RIGHT", mapTopBar, "RIGHT", 0, 0)
     btnFullMap:SetText("Full Map")
     btnFullMap:SetScript("OnClick", function()
@@ -1254,6 +1430,79 @@ function BuildQuestWindow()
             end
         end
     end)
+
+    local btnMyZone = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnMyZone:SetSize(58, 20)
+    btnMyZone:SetPoint("RIGHT", btnFullMap, "LEFT", -2, 0)
+    btnMyZone:SetText("My Zone")
+    btnMyZone:SetScript("OnClick", function()
+        if C_Map and C_Map.GetBestMapForUnit then
+            local pMap = C_Map.GetBestMapForUnit("player")
+            if pMap then LoadZoneMap(pMap) end
+        end
+    end)
+
+    -- Map Uncovered / Exploration Toggle Button
+    btnUncover = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnUncover:SetSize(68, 20)
+    btnUncover:SetPoint("RIGHT", btnMyZone, "LEFT", -2, 0)
+
+    function btnUncover:UpdateText()
+        if DavesQuestsDB.revealAllMap then
+            self:SetText("|cff00ff00All Map|r")
+        else
+            self:SetText("Uncovered")
+        end
+    end
+    btnUncover:UpdateText()
+
+    btnUncover:SetScript("OnClick", function(self)
+        DavesQuestsDB.revealAllMap = not DavesQuestsDB.revealAllMap
+        self:UpdateText()
+        local chk = _G["DavesQuestsRevealCheck"]
+        if chk then chk:SetChecked(DavesQuestsDB.revealAllMap) end
+        if currentMapID then
+            LoadZoneMap(currentMapID, true)
+        end
+    end)
+
+    btnUncover:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("Map Exploration Toggle", 1, 0.82, 0)
+        GameTooltip:AddLine("Mode: " .. (DavesQuestsDB.revealAllMap and "|cff00ff00All Map Revealed|r" or "|cffffd100Uncovered Areas Only|r"), 0.9, 0.9, 0.9)
+        GameTooltip:AddLine("Click to toggle between showing only your discovered uncovered areas vs revealing the full zone map.", 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    btnUncover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Zoom Controls: [-] [100%] [+]
+    local btnZoomIn = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnZoomIn:SetSize(18, 20)
+    btnZoomIn:SetPoint("RIGHT", btnUncover, "LEFT", -4, 0)
+    btnZoomIn:SetText("+")
+    btnZoomIn:SetScript("OnClick", function()
+        ZoomMap(zoomLevel + 0.25)
+    end)
+
+    zoomText = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    zoomText:SetPoint("RIGHT", btnZoomIn, "LEFT", -2, 0)
+    zoomText:SetSize(32, 20)
+    zoomText:SetJustifyH("CENTER")
+    zoomText:SetText("100%")
+
+    local btnZoomOut = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnZoomOut:SetSize(18, 20)
+    btnZoomOut:SetPoint("RIGHT", zoomText, "LEFT", -2, 0)
+    btnZoomOut:SetText("-")
+    btnZoomOut:SetScript("OnClick", function()
+        ZoomMap(zoomLevel - 0.25)
+    end)
+
+    mapTitle = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    mapTitle:SetPoint("LEFT", btnNext, "RIGHT", 6, 0)
+    mapTitle:SetPoint("RIGHT", btnZoomOut, "LEFT", -4, 0)
+    mapTitle:SetJustifyH("LEFT")
+    mapTitle:SetText("Zone Map")
 
     -- ScrollFrame Viewport for Zoomable & Pannable Map
     mapScrollFrame = CreateFrame("ScrollFrame", "DavesQuestsMapScrollFrame", mapPanel)
@@ -1337,15 +1586,21 @@ function BuildQuestWindow()
     -- Live GPS updater & Glowing Area Pulse Animation
     local updateTimer = 0
     mapCanvas:SetScript("OnUpdate", function(self, elapsed)
-        -- Glowing quest area pulsating effect
+        -- Glowing quest mob area pulsating radar animation
         if questAreaGlow and questAreaGlow:IsShown() then
-            local t = GetTime() * 3.5
+            local t = GetTime() * 3.2
             local pulseAlpha = 0.45 + 0.35 * math.sin(t)
             questAreaGlow:SetAlpha(pulseAlpha)
-            if questAreaRing then
+
+            if questAreaRing and questAreaRing:IsShown() then
                 local ringScale = 1.0 + 0.08 * math.sin(t)
-                local baseRingSize = 82 * math.min(1.5, math.max(1.0, zoomLevel * 0.75))
-                questAreaRing:SetSize(baseRingSize * ringScale, baseRingSize * ringScale)
+                local baseSize = 114 * math.min(1.8, math.max(1.0, zoomLevel * 0.85))
+                questAreaRing:SetSize((baseSize + 10) * ringScale, (baseSize + 10) * ringScale)
+
+                if questAreaDotted and questAreaDotted:IsShown() then
+                    local dotScale = 1.0 - 0.06 * math.sin(t)
+                    questAreaDotted:SetSize((baseSize + 18) * dotScale, (baseSize + 18) * dotScale)
+                end
             end
         end
 
