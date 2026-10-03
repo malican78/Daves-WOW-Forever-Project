@@ -18,6 +18,10 @@ if DavesQuestsDB.x == nil then DavesQuestsDB.x = -20 end
 if DavesQuestsDB.y == nil then DavesQuestsDB.y = -80 end
 if DavesQuestsDB.point == nil then DavesQuestsDB.point = "TOPRIGHT" end
 if DavesQuestsDB.hideBlizzTracker == nil then DavesQuestsDB.hideBlizzTracker = true end
+if DavesQuestsDB.showHUDTracker == nil then DavesQuestsDB.showHUDTracker = true end
+if DavesQuestsDB.hudX == nil then DavesQuestsDB.hudX = -15 end
+if DavesQuestsDB.hudY == nil then DavesQuestsDB.hudY = -180 end
+if DavesQuestsDB.hudPoint == nil then DavesQuestsDB.hudPoint = "TOPRIGHT" end
 
 local questRows = {}
 local questWindow = nil
@@ -26,8 +30,12 @@ local questWindow = nil
 -- Theme Helper Functions
 -- =========================================================
 local function setTextureColor(texture, r, g, b, a)
-    texture:SetTexture("Interface\\Buttons\\WHITE8X8")
-    texture:SetVertexColor(r, g, b, a or 1)
+    if texture.SetColorTexture then
+        texture:SetColorTexture(r, g, b, a or 1)
+    else
+        texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+        texture:SetVertexColor(r, g, b, a or 1)
+    end
 end
 
 local function createBorder(frame, color, thickness)
@@ -77,40 +85,37 @@ end
 -- Hide Blizzard's Default Objective Tracker (Edit Mode Safe)
 -- =========================================================
 local function SuppressBlizzardTracker()
-    local tracker = ObjectiveTrackerContainer or ObjectiveTrackerFrame or WatchFrame
-    if not tracker then return end
+    local trackers = {
+        ObjectiveTrackerContainer,
+        ObjectiveTrackerFrame,
+        ObjectiveTrackerBlocksFrame,
+        WatchFrame
+    }
 
-    if DavesQuestsDB.hideBlizzTracker then
-        tracker:SetAlpha(0)
-        tracker:Hide()
-        if tracker.EnableMouse then tracker:EnableMouse(false) end
-
-        if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
-            ObjectiveTrackerFrame:SetAlpha(0)
-            ObjectiveTrackerFrame:Hide()
-            if ObjectiveTrackerFrame.EnableMouse then ObjectiveTrackerFrame:EnableMouse(false) end
-        end
-    else
-        tracker:SetAlpha(1)
-        tracker:Show()
-        if tracker.EnableMouse then tracker:EnableMouse(true) end
-
-        if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
-            ObjectiveTrackerFrame:SetAlpha(1)
-            ObjectiveTrackerFrame:Show()
-            if ObjectiveTrackerFrame.EnableMouse then ObjectiveTrackerFrame:EnableMouse(true) end
-        end
-    end
-
-    -- Prevent Blizzard engine from forcing it visible on quest changes
-    if not tracker._davesQuestsHooked then
-        tracker._davesQuestsHooked = true
-        tracker:HookScript("OnShow", function(self)
+    for _, tracker in ipairs(trackers) do
+        if tracker then
             if DavesQuestsDB.hideBlizzTracker then
-                self:Hide()
-                self:SetAlpha(0)
+                tracker:SetAlpha(0)
+                tracker:Hide()
+                if tracker.EnableMouse then tracker:EnableMouse(false) end
+            else
+                tracker:SetAlpha(1)
+                tracker:Show()
+                if tracker.EnableMouse then tracker:EnableMouse(true) end
             end
-        end)
+
+            -- Prevent Blizzard engine from forcing it visible on quest changes
+            if not tracker._davesQuestsHooked then
+                tracker._davesQuestsHooked = true
+                tracker:HookScript("OnShow", function(self)
+                    if DavesQuestsDB.hideBlizzTracker then
+                        self:Hide()
+                        self:SetAlpha(0)
+                        if self.EnableMouse then self:EnableMouse(false) end
+                    end
+                end)
+            end
+        end
     end
 end
 
@@ -183,7 +188,7 @@ end
 -- =========================================================
 local function BuildQuestWindow()
     local frame = CreateFrame("Frame", "DavesQuestsFrame", UIParent)
-    frame:SetSize(350, 480)
+    frame:SetSize(350, 500)
     frame:SetPoint(DavesQuestsDB.point or "TOPRIGHT", UIParent, DavesQuestsDB.point or "TOPRIGHT", DavesQuestsDB.x or -20, DavesQuestsDB.y or -80)
     
     frame:SetFrameStrata("HIGH")
@@ -227,9 +232,45 @@ local function BuildQuestWindow()
     close:SetPoint("RIGHT", header, "RIGHT", -4, 0)
     close:SetScript("OnClick", function() frame:Hide() end)
 
+    -- Options Bar: HUD Tracker & Default Tracker Toggles
+    local optionsBar = CreateFrame("Frame", nil, frame)
+    optionsBar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
+    optionsBar:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, -2)
+    optionsBar:SetHeight(26)
+
+    local hudCheck = CreateFrame("CheckButton", "DavesQuestsHUDCheck", optionsBar, "UICheckButtonTemplate")
+    hudCheck:SetSize(22, 22)
+    hudCheck:SetPoint("LEFT", optionsBar, "LEFT", 8, 0)
+    _G[hudCheck:GetName() .. "Text"]:SetText("HUD Tracker")
+    _G[hudCheck:GetName() .. "Text"]:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
+    hudCheck:SetChecked(DavesQuestsDB.showHUDTracker)
+    hudCheck:SetScript("OnClick", function(self)
+        local isChecked = self:GetChecked()
+        DavesQuestsDB.showHUDTracker = isChecked
+        if HUDTracker then
+            if isChecked then
+                HUDTracker:Refresh()
+                HUDTracker:Show()
+            else
+                HUDTracker:Hide()
+            end
+        end
+    end)
+
+    local blizzCheck = CreateFrame("CheckButton", "DavesQuestsBlizzCheck", optionsBar, "UICheckButtonTemplate")
+    blizzCheck:SetSize(22, 22)
+    blizzCheck:SetPoint("LEFT", hudCheck, "RIGHT", 95, 0)
+    _G[blizzCheck:GetName() .. "Text"]:SetText("Hide Default Tracker")
+    _G[blizzCheck:GetName() .. "Text"]:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
+    blizzCheck:SetChecked(DavesQuestsDB.hideBlizzTracker)
+    blizzCheck:SetScript("OnClick", function(self)
+        DavesQuestsDB.hideBlizzTracker = self:GetChecked()
+        SuppressBlizzardTracker()
+    end)
+
     -- Scroll Area
     local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 6, -6)
+    scroll:SetPoint("TOPLEFT", optionsBar, "BOTTOMLEFT", 6, -4)
     scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
 
     local content = CreateFrame("Frame", nil, scroll)
@@ -409,9 +450,246 @@ local function ToggleQuestWindow()
     end
 end
 
+-- =========================================================
+-- Transparent HUD Quest Tracker (Replaces Default Tracker)
+-- =========================================================
+local HUDTracker = nil
+local hudRows = {}
+
+local function BuildHUDTracker()
+    if HUDTracker then return HUDTracker end
+
+    local tracker = CreateFrame("Frame", "DavesQuestsHUDTracker", UIParent)
+    tracker:SetSize(280, 450)
+    tracker:SetPoint(DavesQuestsDB.hudPoint or "TOPRIGHT", UIParent, DavesQuestsDB.hudPoint or "TOPRIGHT", DavesQuestsDB.hudX or -15, DavesQuestsDB.hudY or -180)
+    tracker:SetFrameStrata("LOW")
+    tracker:SetClampedToScreen(true)
+    tracker:SetMovable(true)
+
+    -- Transparent Header (Draggable)
+    local hudTitle = tracker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hudTitle:SetPoint("TOPLEFT", tracker, "TOPLEFT", 6, -2)
+    hudTitle:SetPoint("TOPRIGHT", tracker, "TOPRIGHT", -6, -2)
+    hudTitle:SetJustifyH("LEFT")
+    hudTitle:SetText("Quests")
+    hudTitle:SetTextColor(GOLD_TEXT_COLOR[1], GOLD_TEXT_COLOR[2], GOLD_TEXT_COLOR[3])
+    hudTitle:SetShadowOffset(1, -1)
+    hudTitle:SetShadowColor(0, 0, 0, 1)
+    tracker.title = hudTitle
+
+    local dragHandle = CreateFrame("Button", nil, tracker)
+    dragHandle:SetPoint("TOPLEFT", tracker, "TOPLEFT", 0, 0)
+    dragHandle:SetPoint("BOTTOMRIGHT", tracker, "TOPRIGHT", 0, -22)
+    dragHandle:EnableMouse(true)
+    dragHandle:RegisterForDrag("LeftButton")
+    dragHandle:RegisterForClicks("RightButtonUp")
+
+    dragHandle:SetScript("OnDragStart", function() tracker:StartMoving() end)
+    dragHandle:SetScript("OnDragStop", function()
+        tracker:StopMovingOrSizing()
+        local pt, _, relPt, x, y = tracker:GetPoint()
+        DavesQuestsDB.hudPoint = pt
+        DavesQuestsDB.hudX = x
+        DavesQuestsDB.hudY = y
+    end)
+
+    dragHandle:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:AddLine("Dave's Quests HUD Tracker", 1, 0.82, 0)
+        GameTooltip:AddLine("Drag with Left-Click to reposition.", 0.9, 0.9, 0.9)
+        GameTooltip:AddLine("<Right-Click to Open Quest Window>", 0.5, 0.8, 1)
+        GameTooltip:Show()
+    end)
+    dragHandle:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    dragHandle:SetScript("OnClick", function(self, button)
+        if button == "RightButton" then
+            ToggleQuestWindow()
+        end
+    end)
+
+    local function GetHUDRow(index)
+        if not hudRows[index] then
+            local row = CreateFrame("Button", nil, tracker)
+            row:SetWidth(276)
+            row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+
+            row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
+            setTextureColor(row.highlight, 1, 0.82, 0.30, 0.15)
+            row.highlight:SetAllPoints(row)
+
+            row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -2)
+            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -2)
+            row.title:SetJustifyH("LEFT")
+            row.title:SetWordWrap(true)
+            row.title:SetTextColor(1, 0.85, 0.35)
+            row.title:SetShadowOffset(1, -1)
+            row.title:SetShadowColor(0, 0, 0, 1)
+
+            row.objText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.objText:SetPoint("TOPLEFT", row.title, "BOTTOMLEFT", 0, -3)
+            row.objText:SetPoint("TOPRIGHT", row.title, "BOTTOMRIGHT", 0, -3)
+            row.objText:SetJustifyH("LEFT")
+            row.objText:SetWordWrap(true)
+            row.objText:SetSpacing(3)
+            row.objText:SetTextColor(0.92, 0.92, 0.92)
+            row.objText:SetShadowOffset(1, -1)
+            row.objText:SetShadowColor(0, 0, 0, 1)
+
+            row:SetScript("OnEnter", function(self)
+                if self.questData then
+                    ShowQuestObjectiveTooltip(self, self.questData)
+                end
+            end)
+
+            row:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+
+            row:SetScript("OnClick", function(self, button)
+                if not self.questData then return end
+                if button == "RightButton" and IsAltKeyDown() then
+                    ExportQuestToDavesNotes(self.questData)
+                elseif button == "LeftButton" then
+                    if QuestMapFrame_OpenToQuestDetails then
+                        QuestMapFrame_OpenToQuestDetails(self.questData.questID)
+                    elseif ShowUIPanel and QuestLogFrame then
+                        ShowUIPanel(QuestLogFrame)
+                    end
+                elseif button == "RightButton" then
+                    ToggleQuestWindow()
+                end
+            end)
+
+            hudRows[index] = row
+        end
+        return hudRows[index]
+    end
+
+    function tracker:Refresh()
+        if not DavesQuestsDB.showHUDTracker then
+            tracker:Hide()
+            return
+        end
+
+        local quests = {}
+        local numEntries = C_QuestLog.GetNumQuestLogEntries()
+        local currentHeader = "World"
+
+        for index = 1, numEntries do
+            local info = C_QuestLog.GetInfo(index)
+            if info then
+                if info.isHeader then
+                    currentHeader = info.title or "World"
+                elseif not info.isHidden then
+                    local qID = info.questID
+                    local isWatched = C_QuestLog.IsQuestWatched and C_QuestLog.IsQuestWatched(qID)
+                    local objectives = C_QuestLog.GetQuestObjectives(qID)
+                    local isComplete = C_QuestLog.IsComplete(qID)
+
+                    table.insert(quests, {
+                        questID = qID,
+                        title = info.title,
+                        level = info.level,
+                        header = currentHeader,
+                        isComplete = isComplete,
+                        isWatched = isWatched,
+                        objectives = objectives
+                    })
+                end
+            end
+        end
+
+        -- If specific quests are watched, prioritize watched quests
+        local watched = {}
+        for _, q in ipairs(quests) do
+            if q.isWatched then
+                table.insert(watched, q)
+            end
+        end
+
+        local displayQuests = (#watched > 0) and watched or quests
+        local currentY = 24
+
+        for i = 1, #displayQuests do
+            local qData = displayQuests[i]
+            local row = GetHUDRow(i)
+            row.questData = qData
+
+            local completedBadge = qData.isComplete and (" |cff22dd22(Ready)|r") or ""
+            row.title:SetText(string.format("|cffffd100[%d]|r %s%s", qData.level or 0, qData.title or "Quest", completedBadge))
+
+            local objLines = {}
+            if qData.isComplete then
+                table.insert(objLines, ICON_CHECK .. " |cff22dd22Ready for turn-in!|r")
+            elseif qData.objectives and #qData.objectives > 0 then
+                for _, obj in ipairs(qData.objectives) do
+                    if obj.finished then
+                        table.insert(objLines, ICON_CHECK .. " |cff22dd22" .. (obj.text or "") .. "|r")
+                    else
+                        table.insert(objLines, ICON_UNCHECK .. " |cffffffff" .. (obj.text or "") .. "|r")
+                    end
+                end
+            else
+                table.insert(objLines, ICON_UNCHECK .. " |cffaaaaaaIn progress...|r")
+            end
+
+            row.objText:SetText(table.concat(objLines, "\n"))
+
+            row.title:SetWidth(266)
+            row.objText:SetWidth(266)
+
+            local tHeight = row.title:GetStringHeight() or 14
+            local oHeight = row.objText:GetStringHeight() or 14
+            local rowHeight = tHeight + oHeight + 8
+
+            row:SetSize(276, rowHeight)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", tracker, "TOPLEFT", 0, -currentY)
+            row:Show()
+
+            currentY = currentY + rowHeight + 6
+        end
+
+        for i = #displayQuests + 1, #hudRows do
+            hudRows[i]:Hide()
+        end
+
+        tracker:SetHeight(math.max(40, currentY))
+
+        if #displayQuests == 0 then
+            hudTitle:SetText("Quests (0 Tracked)")
+        else
+            hudTitle:SetText(string.format("Quests (%d)", #displayQuests))
+        end
+
+        tracker:Show()
+    end
+
+    HUDTracker = tracker
+    return tracker
+end
+
+local function HandleSlashCmd(msg)
+    local cmd = string.lower(strtrim(msg or ""))
+    if cmd == "hud" then
+        DavesQuestsDB.showHUDTracker = not DavesQuestsDB.showHUDTracker
+        if not HUDTracker then BuildHUDTracker() end
+        if DavesQuestsDB.showHUDTracker then
+            HUDTracker:Refresh()
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Quests]|r HUD Tracker enabled.")
+        else
+            HUDTracker:Hide()
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Quests]|r HUD Tracker hidden.")
+        end
+    else
+        ToggleQuestWindow()
+    end
+end
+
 SLASH_DAVESQUESTS1 = "/dquests"
 SLASH_DAVESQUESTS2 = "/davesquests"
-SlashCmdList["DAVESQUESTS"] = ToggleQuestWindow
+SlashCmdList["DAVESQUESTS"] = HandleSlashCmd
 
 -- =========================================================
 -- Event Handling (Live Tracking & Edit Mode Suppression)
@@ -429,10 +707,25 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
         SuppressBlizzardTracker()
 
-        if event == "PLAYER_LOGIN" and type(DavesMobileMenu_RegisterAddon) == "function" then
-            DavesMobileMenu_RegisterAddon("DavesQuests", "Dave's Quests", 134442, ToggleQuestWindow)
+        if event == "PLAYER_LOGIN" then
+            if not HUDTracker then
+                BuildHUDTracker()
+            end
+            if DavesQuestsDB.showHUDTracker and HUDTracker then
+                HUDTracker:Refresh()
+            end
+
+            if type(DavesMobileMenu_RegisterAddon) == "function" then
+                DavesMobileMenu_RegisterAddon("DavesQuests", "Dave's Quests", 133872, ToggleQuestWindow)
+            end
         end
-    elseif questWindow and questWindow:IsShown() then
+    end
+
+    if HUDTracker and DavesQuestsDB.showHUDTracker then
+        HUDTracker:Refresh()
+    end
+
+    if questWindow and questWindow:IsShown() then
         questWindow:RefreshQuests()
     end
 end)
