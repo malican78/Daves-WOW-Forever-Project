@@ -203,11 +203,39 @@ local function ShowQuestObjectiveTooltip(frame, questData)
 end
 
 -- =========================================================
+-- Pin Logic Helper
+-- =========================================================
+local function GetPinnedIndex(qID)
+    if not DavesQuestsDB.pinnedOrder then return nil end
+    for i, id in ipairs(DavesQuestsDB.pinnedOrder) do
+        if id == qID then return i end
+    end
+    return nil
+end
+
+local function SetQuestPinned(qID, state)
+    if not qID then return end
+    DavesQuestsDB.pinnedQuests = DavesQuestsDB.pinnedQuests or {}
+    DavesQuestsDB.pinnedOrder = DavesQuestsDB.pinnedOrder or {}
+    
+    if state then
+        if not DavesQuestsDB.pinnedQuests[qID] then
+            DavesQuestsDB.pinnedQuests[qID] = true
+            table.insert(DavesQuestsDB.pinnedOrder, qID)
+        end
+    else
+        DavesQuestsDB.pinnedQuests[qID] = nil
+        local idx = GetPinnedIndex(qID)
+        if idx then table.remove(DavesQuestsDB.pinnedOrder, idx) end
+    end
+end
+
+-- =========================================================
 -- Main Quest Tracker Panel Setup
 -- =========================================================
 local function BuildQuestWindow()
     local frame = CreateFrame("Frame", "DavesQuestsFrame", UIParent)
-    frame:SetSize(350, 480)
+    frame:SetSize(350, DavesQuestsDB.height or 480)
     frame:SetPoint(DavesQuestsDB.point or "TOPRIGHT", UIParent, DavesQuestsDB.point or "TOPRIGHT", DavesQuestsDB.x or -20, DavesQuestsDB.y or -80)
     
     frame:SetFrameStrata("HIGH")
@@ -215,9 +243,27 @@ local function BuildQuestWindow()
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
+    if frame.SetResizable then frame:SetResizable(true) end
+    if frame.SetMinResize then frame:SetMinResize(350, 200) end
+    if frame.SetMaxResize then frame:SetMaxResize(350, 1200) end
+    
     applyWindowBackground(frame)
     createBorder(frame, WINDOW_BORDER_COLOR, 3)
     UpdateEscapeRegistration()
+
+    local resizeBtn = CreateFrame("Button", nil, frame)
+    resizeBtn:SetSize(16, 16)
+    resizeBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -4, 4)
+    resizeBtn:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    resizeBtn:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    resizeBtn:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    resizeBtn:SetScript("OnMouseDown", function(self)
+        frame:StartSizing("BOTTOM")
+    end)
+    resizeBtn:SetScript("OnMouseUp", function(self)
+        frame:StopMovingOrSizing()
+        DavesQuestsDB.height = frame:GetHeight()
+    end)
 
     -- Header Panel
     local header = CreateFrame("Frame", nil, frame)
@@ -374,28 +420,66 @@ local function BuildQuestWindow()
             -- Quest Title
             row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
             row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
-            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -75, -8)
+            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -125, -8)
             row.title:SetJustifyH("LEFT")
             row.title:SetWordWrap(true)
             row.title:SetTextColor(0.50, 0.22, 0.02)
             
-            row.pinBtn = CreateFrame("Button", nil, row)
-            row.pinBtn:SetSize(60, 20)
-            row.pinBtn:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -6)
-            local pinText = row.pinBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            pinText:SetAllPoints()
-            pinText:SetJustifyH("RIGHT")
-            row.pinBtn:SetFontString(pinText)
+            row.pinBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            row.pinBtn:SetSize(110, 22)
+            row.pinBtn:SetPoint("TOPRIGHT", row, "TOPRIGHT", -8, -6)
             
             row.pinBtn:SetScript("OnClick", function(self)
                 local qID = row.questData and row.questData.questID
                 if not qID then return end
                 DavesQuestsDB.pinnedQuests = DavesQuestsDB.pinnedQuests or {}
-                if DavesQuestsDB.pinnedQuests[qID] then
-                    DavesQuestsDB.pinnedQuests[qID] = nil
-                else
-                    DavesQuestsDB.pinnedQuests[qID] = true
+                SetQuestPinned(qID, not DavesQuestsDB.pinnedQuests[qID])
+                if questWindow then questWindow:RefreshQuests() end
+            end)
+
+            row:SetMovable(true)
+            row:RegisterForDrag("LeftButton")
+            
+            row:SetScript("OnDragStart", function(self)
+                local qID = self.questData and self.questData.questID
+                if not qID then return end
+                
+                local currentIdx = GetPinnedIndex(qID)
+                if not currentIdx then return end
+
+                self.isDragging = true
+                self.originalLevel = self:GetFrameLevel()
+                self:SetFrameLevel(self.originalLevel + 50)
+                self:ClearAllPoints()
+                self:StartMoving()
+            end)
+            
+            row:SetScript("OnDragStop", function(self)
+                if not self.isDragging then return end
+                self.isDragging = false
+                self:StopMovingOrSizing()
+                if self.originalLevel then self:SetFrameLevel(self.originalLevel) end
+                
+                local qID = self.questData.questID
+                local currentIndex = GetPinnedIndex(qID)
+                
+                local dropTargetQuestID = nil
+                for _, otherRow in pairs(questRows) do
+                    if otherRow:IsShown() and otherRow ~= self and otherRow.questData then
+                        local otherQID = otherRow.questData.questID
+                        if GetPinnedIndex(otherQID) and otherRow:IsMouseOver() then
+                            dropTargetQuestID = otherQID
+                            break
+                        end
+                    end
                 end
+                
+                if dropTargetQuestID then
+                    table.remove(DavesQuestsDB.pinnedOrder, currentIndex)
+                    local newIndex = GetPinnedIndex(dropTargetQuestID)
+                    table.insert(DavesQuestsDB.pinnedOrder, newIndex, qID)
+                end
+                
                 if questWindow then questWindow:RefreshQuests() end
             end)
 
@@ -463,6 +547,15 @@ local function BuildQuestWindow()
         local numEntries = C_QuestLog.GetNumQuestLogEntries()
         local currentHeader = "World"
         DavesQuestsDB.pinnedQuests = DavesQuestsDB.pinnedQuests or {}
+        DavesQuestsDB.pinnedOrder = DavesQuestsDB.pinnedOrder or {}
+        
+        -- Migrate any quests that were pinned before the ordering system was added
+        for qID, isPinned in pairs(DavesQuestsDB.pinnedQuests) do
+            if isPinned and not GetPinnedIndex(qID) then
+                table.insert(DavesQuestsDB.pinnedOrder, qID)
+            end
+        end
+        
         local totalCount = 0
 
         for index = 1, numEntries do
@@ -528,11 +621,11 @@ local function BuildQuestWindow()
                 row.title:SetText(string.format("[%d] %s%s", qData.level or 0, qData.title or "Quest", completedBadge))
                 
                 if DavesQuestsDB.pinnedQuests[qData.questID] then
-                    row.pinBtn:SetText("[ Unpin ]")
+                    row.pinBtn:SetText("Remove")
                     row.pinBtn:GetFontString():SetTextColor(0.95, 0.82, 0.48)
                 else
-                    row.pinBtn:SetText("[ Pin ]")
-                    row.pinBtn:GetFontString():SetTextColor(0.6, 0.6, 0.6)
+                    row.pinBtn:SetText("Set In Progress")
+                    row.pinBtn:GetFontString():SetTextColor(0.95, 0.82, 0.48)
                 end
 
                 local objLines = {}
@@ -570,6 +663,12 @@ local function BuildQuestWindow()
             end
             currentY = currentY + 8
         end
+        
+        table.sort(buckets.current, function(a, b)
+            local idxA = GetPinnedIndex(a.questID) or 999
+            local idxB = GetPinnedIndex(b.questID) or 999
+            return idxA < idxB
+        end)
         
         RenderSection("Current Quests", buckets.current)
         RenderSection("Completed Quests", buckets.completed)
@@ -612,7 +711,75 @@ SlashCmdList["DAVESQUESTS"] = ToggleQuestWindow
 -- =========================================================
 -- Event Handling (Live Tracking & Edit Mode Suppression)
 -- =========================================================
+local function FocusQuestInDavesQuests(qID)
+    if not qID then return end
+    
+    if not questWindow then BuildQuestWindow() end
+    if not questWindow:IsShown() then
+        questWindow:Show()
+        DavesQuestsDB.isOpen = true
+    end
+    
+    SetQuestPinned(qID, true)
+    questWindow:RefreshQuests()
+    
+    for _, row in pairs(questRows) do
+        if row:IsShown() and row.questData and row.questData.questID == qID then
+            local flash = row.flashTex
+            if not flash then
+                flash = row:CreateTexture(nil, "OVERLAY")
+                flash:SetAllPoints(row)
+                flash:SetColorTexture(0.2, 1, 0.2, 0.5)
+                row.flashTex = flash
+            end
+            flash:Show()
+            flash:SetAlpha(0.6)
+            if UIFrameFadeOut then
+                UIFrameFadeOut(flash, 2.0, 0.6, 0)
+            end
+            break
+        end
+    end
+end
+
+local hookedMapFuncs = false
+local function TryHookMapFuncs()
+    if hookedMapFuncs then return end
+    
+    if type(QuestMapFrame_OpenToQuestDetails) == "function" then
+        hooksecurefunc("QuestMapFrame_OpenToQuestDetails", FocusQuestInDavesQuests)
+        hookedMapFuncs = true
+    end
+    if type(QuestMapFrame_ShowQuestDetails) == "function" then
+        hooksecurefunc("QuestMapFrame_ShowQuestDetails", FocusQuestInDavesQuests)
+        hookedMapFuncs = true
+    end
+    if C_SuperTrack and type(C_SuperTrack.SetSuperTrackedQuestID) == "function" then
+        hooksecurefunc(C_SuperTrack, "SetSuperTrackedQuestID", FocusQuestInDavesQuests)
+        hookedMapFuncs = true
+    end
+    if type(QuestPOI_SelectButton) == "function" then
+        hooksecurefunc("QuestPOI_SelectButton", function(poiButton)
+            if poiButton and poiButton.questID then
+                FocusQuestInDavesQuests(poiButton.questID)
+            end
+        end)
+        hookedMapFuncs = true
+    end
+    if type(QuestLog_SetSelection) == "function" then
+        hooksecurefunc("QuestLog_SetSelection", function(questLogIndex)
+            if not C_QuestLog then return end
+            local info = C_QuestLog.GetInfo(questLogIndex)
+            if info and info.questID then
+                FocusQuestInDavesQuests(info.questID)
+            end
+        end)
+        hookedMapFuncs = true
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
 eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
 eventFrame:RegisterEvent("QUEST_ACCEPTED")
@@ -621,11 +788,14 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 
-eventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
+eventFrame:SetScript("OnEvent", function(self, event, arg1, ...)
+    if event == "ADDON_LOADED" then
+        TryHookMapFuncs()
+    elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
         SuppressBlizzardTracker()
 
         if event == "PLAYER_LOGIN" then
+            TryHookMapFuncs()
             if type(DavesMobileMenu_RegisterAddon) == "function" then
                 DavesMobileMenu_RegisterAddon("DavesQuests", "Dave's Quests", 134442, ToggleQuestWindow)
             end
