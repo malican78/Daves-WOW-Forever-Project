@@ -1274,15 +1274,13 @@ function BuildQuestWindow()
 
     -- Draggable Header
     local header = CreateFrame("Button", nil, frame)
-    header:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    header:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -4)
+    header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
     header:SetHeight(48)
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
 
-    header.bg = header:CreateTexture(nil, "BACKGROUND")
-    setTextureColor(header.bg, WINDOW_COLOR[1], WINDOW_COLOR[2], WINDOW_COLOR[3], 0.95)
-    header.bg:SetAllPoints(header)
+    applyWindowBackground(header)
     createBorder(header, WINDOW_BORDER_COLOR, 2)
 
     header:SetScript("OnDragStart", function() frame:StartMoving() end)
@@ -1302,7 +1300,7 @@ function BuildQuestWindow()
     local subTitle = header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     subTitle:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 12, 6)
     subTitle:SetText("Quest Log & Live Map")
-    subTitle:SetTextColor(0.9, 0.9, 0.9)
+    subTitle:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
     frame.subTitle = subTitle
 
     local closeBtn = CreateFrame("Button", nil, header, "UIPanelCloseButton")
