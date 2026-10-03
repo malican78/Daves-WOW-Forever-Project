@@ -9,16 +9,19 @@ local GOLD_TEXT_COLOR = { 1, 0.82, 0.30 }
 local MUTED_GOLD_COLOR = { 0.95, 0.82, 0.48 }
 
 -- Data persistence
-DavesGatherDB = DavesGatherDB or {}
-DavesGatherDB.nodes = DavesGatherDB.nodes or {}
-if type(DavesGatherDB.filters) ~= "table" then
-    DavesGatherDB.filters = {
-        showPins = true,
-        showHerb = true,
-        showOre = true,
-        showCloth = true,
-        showOther = true
-    }
+local function GetFilters()
+    DavesGatherDB = DavesGatherDB or {}
+    DavesGatherDB.nodes = DavesGatherDB.nodes or {}
+    if type(DavesGatherDB.filters) ~= "table" then
+        DavesGatherDB.filters = {
+            showPins = true,
+            showHerb = true,
+            showOre = true,
+            showCloth = true,
+            showOther = true
+        }
+    end
+    return DavesGatherDB.filters
 end
 
 -- Tracking state
@@ -301,12 +304,13 @@ local function RefreshWorldMapPins()
         local node = nodes[i]
         
         local prof = node.profession or "Gather"
-        local show = DavesGatherDB.filters.showPins
+        local filters = GetFilters()
+        local show = filters.showPins
         if show then
-            if prof == "Mining" then show = DavesGatherDB.filters.showOre
-            elseif prof == "Herbalism" then show = DavesGatherDB.filters.showHerb
-            elseif prof == "Mob Drop" then show = DavesGatherDB.filters.showCloth
-            else show = DavesGatherDB.filters.showOther end
+            if prof == "Mining" then show = filters.showOre
+            elseif prof == "Herbalism" then show = filters.showHerb
+            elseif prof == "Mob Drop" then show = filters.showCloth
+            else show = filters.showOther end
         end
 
         if show then
@@ -381,7 +385,8 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     end
 
     local function ToggleFilter(key)
-        DavesGatherDB.filters[key] = not DavesGatherDB.filters[key]
+        local filters = GetFilters()
+        filters[key] = not filters[key]
         UpdateAllMenus()
         if RefreshWorldMapPins then RefreshWorldMapPins() end
     end
@@ -393,8 +398,9 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     local toggleOther = CreateMenuItem(-93, function() ToggleFilter("showOther") end)
 
     local function UpdateMenu()
+        local filters = GetFilters()
         local function GetText(key, label)
-            return (DavesGatherDB.filters[key] and "|cff008800[x]|r " or "|cff888888[ ]|r ") .. label
+            return (filters[key] and "|cff008800[x]|r " or "|cff888888[ ]|r ") .. label
         end
         toggleMaster.text:SetText(GetText("showPins", "Show Map Pins"))
         toggleOre.text:SetText(GetText("showOre", "Ore (Mining)"))
