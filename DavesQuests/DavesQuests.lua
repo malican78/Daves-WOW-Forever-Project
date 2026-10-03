@@ -32,25 +32,35 @@ local questWindow = nil
 local HUDTracker = nil
 local hudRows = {}
 
--- Map & Selection State
+-- Map, Zoom & Selection State
 local selectedQuestID = nil
 local currentMapID = nil
+local zoomLevel = 1.0
+local BASE_MAP_WIDTH = 418
+local BASE_MAP_HEIGHT = 314
+
 local mapTilePool = {}
 local questPinPool = {}
 local gatherPinPool = {}
 local playerPin = nil
 local mapPanel = nil
+local mapScrollFrame = nil
 local mapCanvas = nil
 local mapTitle = nil
+local zoomText = nil
 local mapDetailsText = nil
 local mapFallbackBg = nil
+local questAreaGlow = nil
+local questAreaRing = nil
 
 -- Forward declarations
 local ToggleQuestWindow
 local OpenQuestWindow
 local SelectQuest
 local LoadZoneMap
+local ZoomMap
 local RefreshMapPins
+local CreateQuestAreaGlow
 local SuppressBlizzardTracker
 local BuildHUDTracker
 local BuildQuestWindow
@@ -645,25 +655,39 @@ local function GetMapTileTexture(index)
     return mapTilePool[index]
 end
 
+-- Completely Round Quest Pin Generator
 local function GetQuestPin(index)
     if not questPinPool[index] then
         local pin = CreateFrame("Button", nil, mapCanvas)
         pin:SetSize(24, 24)
         pin:SetFrameLevel(mapCanvas:GetFrameLevel() + 6)
 
+        -- Round background using native RadioButton circle
         pin.bg = pin:CreateTexture(nil, "BACKGROUND")
-        setTextureColor(pin.bg, 0.12, 0.10, 0.08, 0.95)
+        pin.bg:SetTexture("Interface\\Buttons\\UI-RadioButton")
+        pin.bg:SetTexCoord(0, 0.25, 0, 1) -- Smooth circular radio button outline & fill
         pin.bg:SetAllPoints(pin)
-        createBorder(pin, { 1, 0.82, 0.30 }, 2)
+
+        -- Smooth circular alpha mask when supported
+        if pin.CreateMaskTexture then
+            local mask = pin:CreateMaskTexture()
+            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            mask:SetAllPoints(pin)
+            pin.bg:AddMaskTexture(mask)
+            pin.mask = mask
+        end
+
+        -- Round glowing highlight ring
+        pin.highlight = pin:CreateTexture(nil, "OVERLAY")
+        pin.highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+        pin.highlight:SetBlendMode("ADD")
+        pin.highlight:SetVertexColor(1, 0.85, 0.20, 0.95)
+        pin.highlight:SetAllPoints(pin)
+        pin.highlight:Hide()
 
         pin.numText = pin:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         pin.numText:SetPoint("CENTER", pin, "CENTER", 0, 0)
         pin.numText:SetTextColor(1, 0.85, 0.35)
-
-        pin.highlight = pin:CreateTexture(nil, "OVERLAY")
-        setTextureColor(pin.highlight, 1, 0.85, 0.20, 0.40)
-        pin.highlight:SetAllPoints(pin)
-        pin.highlight:Hide()
 
         pin:SetScript("OnEnter", function(self)
             if self.questData then
@@ -682,6 +706,7 @@ local function GetQuestPin(index)
     return questPinPool[index]
 end
 
+-- Completely Round Gather Pin Generator
 local function GetGatherPin(index)
     if not gatherPinPool[index] then
         local pin = CreateFrame("Button", nil, mapCanvas)
@@ -690,7 +715,19 @@ local function GetGatherPin(index)
 
         pin.icon = pin:CreateTexture(nil, "ARTWORK")
         pin.icon:SetAllPoints(pin)
-        createBorder(pin, { 0.2, 0.85, 0.2 }, 1)
+
+        if pin.CreateMaskTexture then
+            local mask = pin:CreateMaskTexture()
+            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            mask:SetAllPoints(pin)
+            pin.icon:AddMaskTexture(mask)
+        end
+
+        pin.border = pin:CreateTexture(nil, "OVERLAY")
+        pin.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+        pin.border:SetSize(28, 28)
+        pin.border:SetPoint("CENTER", pin, "CENTER", 6, -5)
+        pin.border:SetVertexColor(0.2, 0.9, 0.2, 0.85)
 
         pin:SetScript("OnEnter", function(self)
             if self.nodeData then
@@ -735,6 +772,24 @@ local function RefreshGatherPins(canvasW, canvasH)
     end
 end
 
+function CreateQuestAreaGlow()
+    if questAreaGlow then return end
+
+    questAreaGlow = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -2)
+    questAreaGlow:SetTexture("Interface\\Calendar\\EventNotificationGlow")
+    questAreaGlow:SetBlendMode("ADD")
+    questAreaGlow:SetVertexColor(0.20, 0.65, 1.0, 0.65)
+    questAreaGlow:SetSize(76, 76)
+    questAreaGlow:Hide()
+
+    questAreaRing = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -1)
+    questAreaRing:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+    questAreaRing:SetBlendMode("ADD")
+    questAreaRing:SetVertexColor(0.35, 0.80, 1.0, 0.85)
+    questAreaRing:SetSize(82, 82)
+    questAreaRing:Hide()
+end
+
 function RefreshMapPins()
     if not currentMapID or not mapCanvas or not mapCanvas:IsShown() then return end
 
@@ -769,11 +824,9 @@ function RefreshMapPins()
         if selectedQuestID and selectedQuestID == mq.questID then
             pin.highlight:Show()
             pin:SetSize(28, 28)
-            createBorder(pin, { 1, 0.95, 0.4 }, 3)
         else
             pin.highlight:Hide()
             pin:SetSize(22, 22)
-            createBorder(pin, { 1, 0.82, 0.30 }, 2)
         end
 
         pin:Show()
@@ -810,9 +863,54 @@ function RefreshMapPins()
     RefreshGatherPins(canvasW, canvasH)
 end
 
-function LoadZoneMap(mapID)
+function ZoomMap(newZoom, targetNormX, targetNormY)
+    newZoom = math.max(1.0, math.min(3.0, math.floor(newZoom * 100 + 0.5) / 100))
+    local oldZoom = zoomLevel
+    zoomLevel = newZoom
+
+    if zoomText then
+        zoomText:SetText(string.format("%d%%", math.floor(zoomLevel * 100)))
+    end
+
+    local newW = BASE_MAP_WIDTH * zoomLevel
+    local newH = BASE_MAP_HEIGHT * zoomLevel
+    mapCanvas:SetSize(newW, newH)
+
+    if currentMapID then
+        LoadZoneMap(currentMapID, true)
+    end
+
+    if mapScrollFrame then
+        local maxScrollX = math.max(0, newW - mapScrollFrame:GetWidth())
+        local maxScrollY = math.max(0, newH - mapScrollFrame:GetHeight())
+
+        if zoomLevel == 1.0 then
+            mapScrollFrame:SetHorizontalScroll(0)
+            mapScrollFrame:SetVerticalScroll(0)
+        elseif targetNormX and targetNormY then
+            local targetScrollX = math.max(0, math.min(maxScrollX, targetNormX * newW - mapScrollFrame:GetWidth() / 2))
+            local targetScrollY = math.max(0, math.min(maxScrollY, targetNormY * newH - mapScrollFrame:GetHeight() / 2))
+            mapScrollFrame:SetHorizontalScroll(targetScrollX)
+            mapScrollFrame:SetVerticalScroll(targetScrollY)
+        else
+            local ratio = zoomLevel / math.max(1.0, oldZoom)
+            local curScrollX = mapScrollFrame:GetHorizontalScroll()
+            local curScrollY = mapScrollFrame:GetVerticalScroll()
+            local newScrollX = math.max(0, math.min(maxScrollX, (curScrollX + mapScrollFrame:GetWidth() / 2) * ratio - mapScrollFrame:GetWidth() / 2))
+            local newScrollY = math.max(0, math.min(maxScrollY, (curScrollY + mapScrollFrame:GetHeight() / 2) * ratio - mapScrollFrame:GetHeight() / 2))
+            mapScrollFrame:SetHorizontalScroll(newScrollX)
+            mapScrollFrame:SetVerticalScroll(newScrollY)
+        end
+    end
+end
+
+function LoadZoneMap(mapID, keepZoom)
     if not mapID or mapID <= 0 then return end
     currentMapID = mapID
+
+    if not keepZoom and zoomLevel ~= 1.0 then
+        ZoomMap(1.0)
+    end
 
     local mapInfo = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(mapID)
     local zoneName = mapInfo and mapInfo.name or "Zone Map"
@@ -883,13 +981,57 @@ function SelectQuest(questID)
         end
     end
 
-    -- Update Map to match selected quest's zone
     if selectedData then
         local qMap = GetMapForQuest(questID)
         if qMap and qMap > 0 and qMap ~= currentMapID then
             LoadZoneMap(qMap)
         else
             RefreshMapPins()
+        end
+
+        -- Find coordinates for glowing area and auto-center
+        local mapQuests = GetQuestsOnCurrentMap(currentMapID)
+        local targetX, targetY = nil, nil
+        for _, mq in ipairs(mapQuests) do
+            if mq.questID == questID then
+                targetX = mq.x
+                targetY = mq.y
+                break
+            end
+        end
+
+        if targetX and targetY and mapCanvas then
+            CreateQuestAreaGlow()
+            local cw = mapCanvas:GetWidth()
+            local ch = mapCanvas:GetHeight()
+            local glowSize = 74 * math.min(1.5, math.max(1.0, zoomLevel * 0.75))
+
+            questAreaGlow:SetSize(glowSize, glowSize)
+            questAreaRing:SetSize(glowSize + 8, glowSize + 8)
+
+            questAreaGlow:ClearAllPoints()
+            questAreaGlow:SetPoint("CENTER", mapCanvas, "TOPLEFT", targetX * cw, -targetY * ch)
+            questAreaRing:ClearAllPoints()
+            questAreaRing:SetPoint("CENTER", mapCanvas, "TOPLEFT", targetX * cw, -targetY * ch)
+
+            if selectedData.isComplete then
+                questAreaGlow:SetVertexColor(0.25, 0.90, 0.30, 0.65)
+                questAreaRing:SetVertexColor(0.35, 1.0, 0.40, 0.85)
+            else
+                questAreaGlow:SetVertexColor(0.20, 0.65, 1.0, 0.65)
+                questAreaRing:SetVertexColor(0.35, 0.80, 1.0, 0.85)
+            end
+
+            questAreaGlow:Show()
+            questAreaRing:Show()
+
+            -- Auto-center on quest coordinates if zoomed in
+            if zoomLevel > 1.0 then
+                ZoomMap(zoomLevel, targetX, targetY)
+            end
+        else
+            if questAreaGlow then questAreaGlow:Hide() end
+            if questAreaRing then questAreaRing:Hide() end
         end
 
         -- Update bottom card details
@@ -911,7 +1053,6 @@ function SelectQuest(questID)
         end
     end
 
-    -- Refresh quest list cards to reflect selection highlight
     if questWindow and questWindow.RefreshQuests then
         questWindow:RefreshQuests()
     end
@@ -1019,20 +1160,20 @@ function BuildQuestWindow()
     end)
 
     -- =========================================================
-    -- Left Pane: Quest Map Panel
+    -- Left Pane: Quest Map Panel with Zooming & Panning
     -- =========================================================
     mapPanel = CreateFrame("Frame", nil, frame)
     mapPanel:SetPoint("TOPLEFT", optionsBar, "BOTTOMLEFT", 8, -4)
     mapPanel:SetSize(420, 444)
 
-    -- Map Navigation Bar
+    -- Map Navigation & Zoom Bar
     local mapTopBar = CreateFrame("Frame", nil, mapPanel)
     mapTopBar:SetPoint("TOPLEFT", mapPanel, "TOPLEFT", 0, 0)
     mapTopBar:SetPoint("TOPRIGHT", mapPanel, "TOPRIGHT", 0, 0)
     mapTopBar:SetHeight(26)
 
     local btnPrev = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnPrev:SetSize(22, 20)
+    btnPrev:SetSize(20, 20)
     btnPrev:SetPoint("LEFT", mapTopBar, "LEFT", 0, 0)
     btnPrev:SetText("<")
     btnPrev:SetScript("OnClick", function()
@@ -1047,7 +1188,7 @@ function BuildQuestWindow()
     end)
 
     local btnNext = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnNext:SetSize(22, 20)
+    btnNext:SetSize(20, 20)
     btnNext:SetPoint("LEFT", btnPrev, "RIGHT", 2, 0)
     btnNext:SetText(">")
     btnNext:SetScript("OnClick", function()
@@ -1063,13 +1204,36 @@ function BuildQuestWindow()
 
     mapTitle = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     mapTitle:SetPoint("LEFT", btnNext, "RIGHT", 6, 0)
-    mapTitle:SetPoint("RIGHT", mapTopBar, "RIGHT", -150, 0)
+    mapTitle:SetPoint("RIGHT", mapTopBar, "RIGHT", -210, 0)
     mapTitle:SetJustifyH("LEFT")
     mapTitle:SetText("Zone Map")
 
+    -- Zoom Controls: [-] [100%] [+]
+    local btnZoomOut = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnZoomOut:SetSize(18, 20)
+    btnZoomOut:SetPoint("RIGHT", mapTopBar, "RIGHT", -190, 0)
+    btnZoomOut:SetText("-")
+    btnZoomOut:SetScript("OnClick", function()
+        ZoomMap(zoomLevel - 0.25)
+    end)
+
+    zoomText = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    zoomText:SetPoint("LEFT", btnZoomOut, "RIGHT", 2, 0)
+    zoomText:SetSize(36, 20)
+    zoomText:SetJustifyH("CENTER")
+    zoomText:SetText("100%")
+
+    local btnZoomIn = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnZoomIn:SetSize(18, 20)
+    btnZoomIn:SetPoint("LEFT", zoomText, "RIGHT", 2, 0)
+    btnZoomIn:SetText("+")
+    btnZoomIn:SetScript("OnClick", function()
+        ZoomMap(zoomLevel + 0.25)
+    end)
+
     local btnMyZone = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnMyZone:SetSize(68, 20)
-    btnMyZone:SetPoint("RIGHT", mapTopBar, "RIGHT", -68, 0)
+    btnMyZone:SetSize(62, 20)
+    btnMyZone:SetPoint("RIGHT", mapTopBar, "RIGHT", -64, 0)
     btnMyZone:SetText("My Zone")
     btnMyZone:SetScript("OnClick", function()
         if C_Map and C_Map.GetBestMapForUnit then
@@ -1079,7 +1243,7 @@ function BuildQuestWindow()
     end)
 
     local btnFullMap = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
-    btnFullMap:SetSize(64, 20)
+    btnFullMap:SetSize(62, 20)
     btnFullMap:SetPoint("RIGHT", mapTopBar, "RIGHT", 0, 0)
     btnFullMap:SetText("Full Map")
     btnFullMap:SetScript("OnClick", function()
@@ -1091,15 +1255,74 @@ function BuildQuestWindow()
         end
     end)
 
-    -- Map Canvas Viewport (4:3 Aspect Ratio)
-    mapCanvas = CreateFrame("Frame", nil, mapPanel)
-    mapCanvas:SetPoint("TOPLEFT", mapTopBar, "BOTTOMLEFT", 0, -2)
-    mapCanvas:SetSize(418, 314)
-    createBorder(mapCanvas, WINDOW_BORDER_COLOR, 2)
+    -- ScrollFrame Viewport for Zoomable & Pannable Map
+    mapScrollFrame = CreateFrame("ScrollFrame", "DavesQuestsMapScrollFrame", mapPanel)
+    mapScrollFrame:SetPoint("TOPLEFT", mapTopBar, "BOTTOMLEFT", 0, -2)
+    mapScrollFrame:SetSize(BASE_MAP_WIDTH, BASE_MAP_HEIGHT)
+    mapScrollFrame:EnableMouse(true)
+    mapScrollFrame:EnableMouseWheel(true)
+    mapScrollFrame:SetClipsChildren(true)
+    createBorder(mapScrollFrame, WINDOW_BORDER_COLOR, 2)
+
+    -- Map Canvas Viewport (ScrollChild)
+    mapCanvas = CreateFrame("Frame", nil, mapScrollFrame)
+    mapCanvas:SetSize(BASE_MAP_WIDTH, BASE_MAP_HEIGHT)
+    mapScrollFrame:SetScrollChild(mapCanvas)
 
     mapFallbackBg = mapCanvas:CreateTexture(nil, "BACKGROUND")
     setTextureColor(mapFallbackBg, 0.90, 0.85, 0.72, 1.0)
     mapFallbackBg:SetAllPoints(mapCanvas)
+
+    -- Interactive Mouse Wheel Zooming
+    mapScrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        if delta > 0 then
+            ZoomMap(zoomLevel + 0.25)
+        else
+            ZoomMap(zoomLevel - 0.25)
+        end
+    end)
+
+    -- Drag to Pan Map Viewport when Zoomed
+    local isDragging = false
+    local startCursorX, startCursorY = 0, 0
+    local startScrollX, startScrollY = 0, 0
+
+    mapScrollFrame:SetScript("OnMouseDown", function(self, button)
+        if (button == "LeftButton" or button == "RightButton") and zoomLevel > 1.0 then
+            isDragging = true
+            local scale = self:GetEffectiveScale()
+            startCursorX, startCursorY = GetCursorPosition()
+            startCursorX = startCursorX / scale
+            startCursorY = startCursorY / scale
+            startScrollX = self:GetHorizontalScroll()
+            startScrollY = self:GetVerticalScroll()
+        end
+    end)
+
+    mapScrollFrame:SetScript("OnMouseUp", function()
+        isDragging = false
+    end)
+
+    mapScrollFrame:SetScript("OnUpdate", function(self)
+        if isDragging and zoomLevel > 1.0 then
+            local scale = self:GetEffectiveScale()
+            local curX, curY = GetCursorPosition()
+            curX = curX / scale
+            curY = curY / scale
+
+            local deltaX = startCursorX - curX
+            local deltaY = curY - startCursorY
+
+            local maxScrollX = math.max(0, mapCanvas:GetWidth() - self:GetWidth())
+            local maxScrollY = math.max(0, mapCanvas:GetHeight() - self:GetHeight())
+
+            local newScrollX = math.max(0, math.min(maxScrollX, startScrollX + deltaX))
+            local newScrollY = math.max(0, math.min(maxScrollY, startScrollY + deltaY))
+
+            self:SetHorizontalScroll(newScrollX)
+            self:SetVerticalScroll(newScrollY)
+        end
+    end)
 
     -- Player Location Pin with Heading Arrow
     playerPin = CreateFrame("Frame", nil, mapCanvas)
@@ -1111,15 +1334,28 @@ function BuildQuestWindow()
     playerPin.arrow:SetAllPoints(playerPin)
     playerPin:Hide()
 
-    -- Live Player GPS updater
+    -- Live GPS updater & Glowing Area Pulse Animation
     local updateTimer = 0
     mapCanvas:SetScript("OnUpdate", function(self, elapsed)
+        -- Glowing quest area pulsating effect
+        if questAreaGlow and questAreaGlow:IsShown() then
+            local t = GetTime() * 3.5
+            local pulseAlpha = 0.45 + 0.35 * math.sin(t)
+            questAreaGlow:SetAlpha(pulseAlpha)
+            if questAreaRing then
+                local ringScale = 1.0 + 0.08 * math.sin(t)
+                local baseRingSize = 82 * math.min(1.5, math.max(1.0, zoomLevel * 0.75))
+                questAreaRing:SetSize(baseRingSize * ringScale, baseRingSize * ringScale)
+            end
+        end
+
+        -- GPS Player Position Update
         updateTimer = updateTimer + elapsed
         if updateTimer >= 0.25 then
             updateTimer = 0
             if currentMapID and C_Map and C_Map.GetPlayerMapPosition then
                 local pos = C_Map.GetPlayerMapPosition(currentMapID, "player")
-                if pos then
+                if pos and playerPin then
                     local px, py = pos:GetXY()
                     if px and py and px > 0 and py > 0 then
                         local cw = self:GetWidth()
@@ -1133,16 +1369,18 @@ function BuildQuestWindow()
                     else
                         playerPin:Hide()
                     end
-                else
+                elseif playerPin then
                     playerPin:Hide()
                 end
+            elseif playerPin then
+                playerPin:Hide()
             end
         end
     end)
 
     -- Map Bottom Details Card
     local detailsCard = CreateFrame("Frame", nil, mapPanel)
-    detailsCard:SetPoint("TOPLEFT", mapCanvas, "BOTTOMLEFT", 0, -4)
+    detailsCard:SetPoint("TOPLEFT", mapScrollFrame, "BOTTOMLEFT", 0, -4)
     detailsCard:SetPoint("BOTTOMRIGHT", mapPanel, "BOTTOMRIGHT", 0, 0)
 
     detailsCard.bg = detailsCard:CreateTexture(nil, "BACKGROUND")
