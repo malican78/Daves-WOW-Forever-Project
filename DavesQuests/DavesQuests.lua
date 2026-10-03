@@ -18,6 +18,7 @@ if DavesQuestsDB.x == nil then DavesQuestsDB.x = -20 end
 if DavesQuestsDB.y == nil then DavesQuestsDB.y = -80 end
 if DavesQuestsDB.point == nil then DavesQuestsDB.point = "TOPRIGHT" end
 if DavesQuestsDB.hideBlizzTracker == nil then DavesQuestsDB.hideBlizzTracker = true end
+if DavesQuestsDB.lockWindow == nil then DavesQuestsDB.lockWindow = false end
 
 local questRows = {}
 local questWindow = nil
@@ -73,39 +74,61 @@ local function registerEscapeFrame(frameName)
     table.insert(UISpecialFrames, frameName)
 end
 
+local function UpdateEscapeRegistration()
+    if not UISpecialFrames then return end
+    for i = #UISpecialFrames, 1, -1 do
+        if UISpecialFrames[i] == "DavesQuestsFrame" then
+            table.remove(UISpecialFrames, i)
+        end
+    end
+    if not DavesQuestsDB.lockWindow then
+        table.insert(UISpecialFrames, "DavesQuestsFrame")
+    end
+end
+
 -- =========================================================
--- Hide Blizzard's Default Objective Tracker (Edit Mode Safe)
+-- Hide / Restore Blizzard's Default Objective Tracker
 -- =========================================================
 local function SuppressBlizzardTracker()
-    local tracker = ObjectiveTrackerContainer or ObjectiveTrackerFrame or WatchFrame
+    local tracker = ObjectiveTrackerContainer or ObjectiveTrackerFrame or WatchFrame or QuestWatchFrame
     if not tracker then return end
 
-    if DavesQuestsDB.hideBlizzTracker then
-        tracker:SetAlpha(0)
-        tracker:Hide()
-        if tracker.EnableMouse then tracker:EnableMouse(false) end
-
-        if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
-            ObjectiveTrackerFrame:SetAlpha(0)
-            ObjectiveTrackerFrame:Hide()
-            if ObjectiveTrackerFrame.EnableMouse then ObjectiveTrackerFrame:EnableMouse(false) end
-        end
-    else
-        tracker:SetAlpha(1)
-        tracker:Show()
-        if tracker.EnableMouse then tracker:EnableMouse(true) end
-
-        if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
-            ObjectiveTrackerFrame:SetAlpha(1)
-            ObjectiveTrackerFrame:Show()
-            if ObjectiveTrackerFrame.EnableMouse then ObjectiveTrackerFrame:EnableMouse(true) end
+    local function ApplyTrackerVisibility(f, hide)
+        if not f then return end
+        if hide then
+            f:SetAlpha(0)
+            f:Hide()
+            if f.EnableMouse then f:EnableMouse(false) end
+        else
+            f:SetAlpha(1)
+            f:Show()
+            if f.EnableMouse then f:EnableMouse(true) end
         end
     end
 
-    -- Prevent Blizzard engine from forcing it visible on quest changes
+    ApplyTrackerVisibility(tracker, DavesQuestsDB.hideBlizzTracker)
+
+    if ObjectiveTrackerFrame and ObjectiveTrackerFrame ~= tracker then
+        ApplyTrackerVisibility(ObjectiveTrackerFrame, DavesQuestsDB.hideBlizzTracker)
+    end
+    if QuestWatchFrame and QuestWatchFrame ~= tracker then
+        ApplyTrackerVisibility(QuestWatchFrame, DavesQuestsDB.hideBlizzTracker)
+    end
+
+    -- Hook tracker once to keep hidden if hideBlizzTracker is true
     if not tracker._davesQuestsHooked then
         tracker._davesQuestsHooked = true
         tracker:HookScript("OnShow", function(self)
+            if DavesQuestsDB.hideBlizzTracker then
+                self:Hide()
+                self:SetAlpha(0)
+            end
+        end)
+    end
+
+    if QuestWatchFrame and not QuestWatchFrame._davesQuestsHooked then
+        QuestWatchFrame._davesQuestsHooked = true
+        QuestWatchFrame:HookScript("OnShow", function(self)
             if DavesQuestsDB.hideBlizzTracker then
                 self:Hide()
                 self:SetAlpha(0)
@@ -193,7 +216,7 @@ local function BuildQuestWindow()
     frame:SetClampedToScreen(true)
     applyWindowBackground(frame)
     createBorder(frame, WINDOW_BORDER_COLOR, 3)
-    registerEscapeFrame("DavesQuestsFrame")
+    UpdateEscapeRegistration()
 
     -- Header Panel
     local header = CreateFrame("Frame", nil, frame)
@@ -227,10 +250,97 @@ local function BuildQuestWindow()
     close:SetPoint("RIGHT", header, "RIGHT", -4, 0)
     close:SetScript("OnClick", function() frame:Hide() end)
 
+    -- Options Dropdown Menu Button
+    local optionsBtn = CreateFrame("Button", "DavesQuestsOptionsBtn", header, "UIPanelButtonTemplate")
+    optionsBtn:SetSize(75, 22)
+    optionsBtn:SetPoint("RIGHT", close, "LEFT", -4, 0)
+    optionsBtn:SetText("Options v")
+
+    -- Options Dropdown Menu Frame
+    local optionsMenu = CreateFrame("Frame", nil, frame)
+    optionsMenu:SetSize(225, 54)
+    optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, -2)
+    optionsMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+    optionsMenu:SetToplevel(true)
+    optionsMenu:SetFrameLevel(250)
+    optionsMenu:EnableMouse(true)
+
+    optionsMenu.solidBg = optionsMenu:CreateTexture(nil, "BACKGROUND", nil, -8)
+    setTextureColor(optionsMenu.solidBg, 0.98, 0.95, 0.86, 1.0)
+    optionsMenu.solidBg:SetAllPoints(optionsMenu)
+    createBorder(optionsMenu, WINDOW_BORDER_COLOR, 2)
+    optionsMenu:Hide()
+
+    local function CreateQuestMenuItem(parent, yOffset, onClick)
+        local btn = CreateFrame("Button", nil, parent)
+        btn:SetSize(215, 20)
+        btn:SetPoint("TOPLEFT", parent, "TOPLEFT", 5, yOffset)
+
+        btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+        setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
+        btn.highlight:SetAllPoints(btn)
+
+        btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
+        btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+        btn.text:SetJustifyH("LEFT")
+        btn.text:SetWordWrap(false)
+        btn.text:SetTextColor(0.12, 0.09, 0.05)
+
+        btn:SetScript("OnClick", function(self)
+            if onClick then onClick(self) end
+        end)
+        return btn
+    end
+
+    local UpdateOptionsMenu
+
+    local trackerOpt = CreateQuestMenuItem(optionsMenu, -5, function()
+        DavesQuestsDB.hideBlizzTracker = not DavesQuestsDB.hideBlizzTracker
+        SuppressBlizzardTracker()
+        UpdateOptionsMenu()
+    end)
+
+    local lockOpt = CreateQuestMenuItem(optionsMenu, -27, function()
+        DavesQuestsDB.lockWindow = not DavesQuestsDB.lockWindow
+        UpdateEscapeRegistration()
+        UpdateOptionsMenu()
+    end)
+
+    function UpdateOptionsMenu()
+        if DavesQuestsDB.hideBlizzTracker then
+            trackerOpt.text:SetText("|cff888888[ ]|r In-Game Tracker (Hidden)")
+        else
+            trackerOpt.text:SetText("|cff008800[x]|r In-Game Tracker (Shown)")
+        end
+
+        if DavesQuestsDB.lockWindow then
+            lockOpt.text:SetText("|cff008800[x]|r Lock Window (ESC ignores)")
+        else
+            lockOpt.text:SetText("|cff888888[ ]|r Lock Window (ESC closes)")
+        end
+    end
+
+    optionsBtn:SetScript("OnClick", function()
+        if optionsMenu:IsShown() then
+            optionsMenu:Hide()
+        else
+            UpdateOptionsMenu()
+            optionsMenu:Show()
+        end
+    end)
+
+    frame:HookScript("OnHide", function()
+        optionsMenu:Hide()
+    end)
+
     -- Scroll Area
     local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 6, -6)
     scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
+    scroll:HookScript("OnMouseDown", function()
+        optionsMenu:Hide()
+    end)
 
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(310, 1)

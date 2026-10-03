@@ -176,30 +176,75 @@ local closeBtn = CreateFrame("Button", nil, header, "UIPanelCloseButton")
 closeBtn:SetPoint("RIGHT", header, "RIGHT", -6, 0)
 closeBtn:SetScript("OnClick", function() BagFrame:Hide() end)
 
--- "Sell Junk" Button (Visible only at merchants)
-local sellJunkBtn = CreateFrame("Button", "DavesBagsSellJunkBtn", header, "UIPanelButtonTemplate")
-sellJunkBtn:SetSize(70, 22)
-sellJunkBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
-sellJunkBtn:SetText("Sell Junk")
-sellJunkBtn:Hide()
+-- Actions Dropdown Menu Button
+local menuBtn = CreateFrame("Button", "DavesBagsMenuBtn", header, "UIPanelButtonTemplate")
+menuBtn:SetSize(74, 22)
+menuBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+menuBtn:SetText("Actions v")
 
--- "Category View" Toggle Button
-local categoryToggleBtn = CreateFrame("Button", "DavesBagsCategoryBtn", header, "UIPanelButtonTemplate")
-categoryToggleBtn:SetSize(92, 22)
-categoryToggleBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
-categoryToggleBtn:SetText("Category View")
+-- Actions Dropdown Menu Frame
+local bagActionsMenu = CreateFrame("Frame", nil, BagFrame)
+bagActionsMenu:SetSize(165, 96)
+bagActionsMenu:SetPoint("TOPRIGHT", menuBtn, "BOTTOMRIGHT", 0, -2)
+bagActionsMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+bagActionsMenu:SetToplevel(true)
+bagActionsMenu:SetFrameLevel(250)
+bagActionsMenu:EnableMouse(true)
 
--- "View Bank" / "View Bags" Toggle Button
-local bankToggleBtn = CreateFrame("Button", "DavesBagsBankBtn", header, "UIPanelButtonTemplate")
-bankToggleBtn:SetSize(80, 22)
-bankToggleBtn:SetPoint("RIGHT", categoryToggleBtn, "LEFT", -4, 0)
-bankToggleBtn:SetText("View Bank")
+bagActionsMenu.solidBg = bagActionsMenu:CreateTexture(nil, "BACKGROUND", nil, -8)
+setTextureColor(bagActionsMenu.solidBg, 0.98, 0.95, 0.86, 1.0)
+bagActionsMenu.solidBg:SetAllPoints(bagActionsMenu)
+createBorder(bagActionsMenu, WINDOW_BORDER_COLOR, 2)
+bagActionsMenu:Hide()
 
--- "Trash Grays" Button
-local trashGraysBtn = CreateFrame("Button", "DavesBagsTrashGraysBtn", header, "UIPanelButtonTemplate")
-trashGraysBtn:SetSize(80, 22)
-trashGraysBtn:SetPoint("RIGHT", bankToggleBtn, "LEFT", -4, 0)
-trashGraysBtn:SetText("Trash Grays")
+local function CreateBagMenuItem(parent, yOffset, onClick)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetSize(155, 20)
+    btn:SetPoint("TOPLEFT", parent, "TOPLEFT", 5, yOffset)
+
+    btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+    setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
+    btn.highlight:SetAllPoints(btn)
+
+    btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
+    btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+    btn.text:SetJustifyH("LEFT")
+    btn.text:SetWordWrap(false)
+    btn.text:SetTextColor(0.12, 0.09, 0.05)
+
+    btn:SetScript("OnClick", function(self)
+        if onClick then onClick(self) end
+    end)
+    function btn:SetText(t)
+        self.text:SetText(t)
+    end
+    function btn:GetText()
+        return self.text:GetText()
+    end
+    return btn
+end
+
+local UpdateBagActionsMenu
+
+local categoryToggleBtn = CreateBagMenuItem(bagActionsMenu, -5, function()
+    isCategoryView = not isCategoryView
+    bagActionsMenu:Hide()
+    UpdateBagGrid()
+    UpdateBagActionsMenu()
+end)
+
+local bankToggleBtn = CreateBagMenuItem(bagActionsMenu, -27, function()
+    isShowingBank = not isShowingBank
+    bagActionsMenu:Hide()
+    UpdateBagGrid()
+    UpdateBagActionsMenu()
+end)
+
+local trashGraysBtn = CreateBagMenuItem(bagActionsMenu, -49, function()
+    bagActionsMenu:Hide()
+    StaticPopup_Show("DAVESBAGS_CONFIRM_TRASH_GRAYS")
+end)
 
 trashGraysBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -207,13 +252,44 @@ trashGraysBtn:SetScript("OnEnter", function(self)
     GameTooltip:AddLine("Permanently destroys all poor-quality (gray) items in your bags.", 1, 0.8, 0, true)
     GameTooltip:Show()
 end)
-
 trashGraysBtn:SetScript("OnLeave", function()
     GameTooltip:Hide()
 end)
 
-trashGraysBtn:SetScript("OnClick", function()
-    StaticPopup_Show("DAVESBAGS_CONFIRM_TRASH_GRAYS")
+local sellJunkBtn = CreateBagMenuItem(bagActionsMenu, -71, function()
+    bagActionsMenu:Hide()
+    if SellAllJunk then SellAllJunk() end
+end)
+
+function UpdateBagActionsMenu()
+    categoryToggleBtn.text:SetText(isCategoryView and "• Slot View" or "• Category View")
+    bankToggleBtn.text:SetText(isShowingBank and "• View Bags" or "• View Bank")
+    trashGraysBtn.text:SetText("• Trash Grays")
+
+    local atMerchant = MerchantFrame and MerchantFrame:IsShown()
+    if atMerchant then
+        sellJunkBtn.text:SetText("|cff008800• Sell Junk (Vendor)|r")
+        sellJunkBtn:Enable()
+    else
+        sellJunkBtn.text:SetText("|cff888888• Sell Junk (Vendor)|r")
+        sellJunkBtn:Disable()
+    end
+end
+
+menuBtn:SetScript("OnClick", function()
+    if bagActionsMenu:IsShown() then
+        bagActionsMenu:Hide()
+    else
+        UpdateBagActionsMenu()
+        bagActionsMenu:Show()
+    end
+end)
+
+BagFrame:HookScript("OnHide", function()
+    bagActionsMenu:Hide()
+end)
+BagFrame:HookScript("OnMouseDown", function()
+    bagActionsMenu:Hide()
 end)
 
 -- =========================================================
@@ -436,7 +512,10 @@ local function SellAllJunk()
     end
 end
 
-sellJunkBtn:SetScript("OnClick", SellAllJunk)
+sellJunkBtn:SetScript("OnClick", function()
+    bagActionsMenu:Hide()
+    SellAllJunk()
+end)
 
 -- =========================================================
 -- Bank Snapshot Caching
@@ -848,21 +927,6 @@ local function UpdateBagGrid()
 end
 
 -- =========================================================
--- Button Click Handlers
--- =========================================================
-categoryToggleBtn:SetScript("OnClick", function()
-    isCategoryView = not isCategoryView
-    categoryToggleBtn:SetText(isCategoryView and "Slot View" or "Category View")
-    UpdateBagGrid()
-end)
-
-bankToggleBtn:SetScript("OnClick", function()
-    isShowingBank = not isShowingBank
-    bankToggleBtn:SetText(isShowingBank and "View Bags" or "View Bank")
-    UpdateBagGrid()
-end)
-
--- =========================================================
 -- Event Handling (General, Merchant, Bank, Money)
 -- =========================================================
 local eventFrame = CreateFrame("Frame")
@@ -886,6 +950,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             BagFrame:UpdateFooterMenu()
         end
         UpdateMoneyDisplay()
+        UpdateBagActionsMenu()
 
     elseif event == "PLAYER_MONEY" then
         UpdateMoneyDisplay()
@@ -900,6 +965,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         elseif isShowingBank then
             UpdateBagGrid()
         end
+        UpdateBagActionsMenu()
 
     elseif event == "PLAYERBANKSLOTS_CHANGED" then
         if isBankOpen then
@@ -917,9 +983,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
         if BagFrame:IsShown() and not (MerchantFrame and MerchantFrame:IsShown()) then
             isShowingBank = false
-            bankToggleBtn:SetText("View Bank")
             BagFrame:Hide()
         end
+        UpdateBagActionsMenu()
 
     elseif event == "BAG_UPDATE_DELAYED" then
         if isBankOpen then
@@ -930,19 +996,16 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "MERCHANT_SHOW" then
-        sellJunkBtn:Show()
-        categoryToggleBtn:SetPoint("RIGHT", sellJunkBtn, "LEFT", -4, 0)
         if not BagFrame:IsShown() then
             isShowingBank = false
-            bankToggleBtn:SetText("View Bank")
             UpdateBagGrid()
             BagFrame:Show()
             BagFrame:Raise()
         end
+        UpdateBagActionsMenu()
 
     elseif event == "MERCHANT_CLOSED" then
-        sellJunkBtn:Hide()
-        categoryToggleBtn:SetPoint("RIGHT", closeBtn, "LEFT", -4, 0)
+        UpdateBagActionsMenu()
 
     elseif BagFrame:IsShown() then
         UpdateBagGrid()
