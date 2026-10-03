@@ -11,6 +11,15 @@ local MUTED_GOLD_COLOR = { 0.95, 0.82, 0.48 }
 -- Data persistence
 DavesGatherDB = DavesGatherDB or {}
 DavesGatherDB.nodes = DavesGatherDB.nodes or {}
+if type(DavesGatherDB.filters) ~= "table" then
+    DavesGatherDB.filters = {
+        showPins = true,
+        showHerb = true,
+        showOre = true,
+        showCloth = true,
+        showOther = true
+    }
+end
 
 -- Tracking state
 local lastGatherSpell = nil
@@ -287,24 +296,134 @@ local function RefreshWorldMapPins()
 
     if canvasWidth == 0 or canvasHeight == 0 then return end
 
+    local activePinIndex = 1
     for i = 1, #nodes do
         local node = nodes[i]
-        local pin = GetMapPin(i)
-        pin.nodeData = node
-        pin.texture:SetTexture(node.icon or 134400)
+        
+        local prof = node.profession or "Gather"
+        local show = DavesGatherDB.filters.showPins
+        if show then
+            if prof == "Mining" then show = DavesGatherDB.filters.showOre
+            elseif prof == "Herbalism" then show = DavesGatherDB.filters.showHerb
+            elseif prof == "Mob Drop" then show = DavesGatherDB.filters.showCloth
+            else show = DavesGatherDB.filters.showOther end
+        end
 
-        pin:ClearAllPoints()
-        pin:SetPoint("CENTER", canvas, "TOPLEFT", node.x * canvasWidth, -node.y * canvasHeight)
-        pin:Show()
+        if show then
+            local pin = GetMapPin(activePinIndex)
+            pin.nodeData = node
+            pin.texture:SetTexture(node.icon or 134400)
+
+            pin:ClearAllPoints()
+            pin:SetPoint("CENTER", canvas, "TOPLEFT", node.x * canvasWidth, -node.y * canvasHeight)
+            pin:Show()
+            activePinIndex = activePinIndex + 1
+        end
     end
 
-    for i = #nodes + 1, #mapPinsPool do
+    for i = activePinIndex, #mapPinsPool do
         mapPinsPool[i]:Hide()
     end
 end
 
 hooksecurefunc(WorldMapFrame, "OnMapChanged", RefreshWorldMapPins)
 WorldMapFrame:HookScript("OnShow", RefreshWorldMapPins)
+
+-- =========================================================
+-- Map Pins Dropdown Menu (Shared)
+-- =========================================================
+local menuUpdateFuncs = {}
+local function UpdateAllMenus()
+    for _, func in ipairs(menuUpdateFuncs) do func() end
+end
+
+local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel, x, y, level)
+    local optionsBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    optionsBtn:SetSize(85, 22)
+    optionsBtn:SetPoint(anchorPoint, anchorFrame, anchorRel, x, y)
+    optionsBtn:SetText("Map Pins v")
+    if level then optionsBtn:SetFrameLevel(level) end
+
+    local optionsMenu = CreateFrame("Frame", nil, parent)
+    optionsMenu:SetSize(165, 120)
+    optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, -2)
+    optionsMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+    optionsMenu:SetToplevel(true)
+    optionsMenu:SetFrameLevel(250)
+    optionsMenu:EnableMouse(true)
+    
+    optionsMenu.solidBg = optionsMenu:CreateTexture(nil, "BACKGROUND", nil, -8)
+    setTextureColor(optionsMenu.solidBg, 0.98, 0.95, 0.86, 1.0)
+    optionsMenu.solidBg:SetAllPoints(optionsMenu)
+    createBorder(optionsMenu, WINDOW_BORDER_COLOR, 2)
+    optionsMenu:Hide()
+
+    local function CreateMenuItem(yOffset, onClick)
+        local btn = CreateFrame("Button", nil, optionsMenu)
+        btn:SetSize(155, 20)
+        btn:SetPoint("TOPLEFT", optionsMenu, "TOPLEFT", 5, yOffset)
+
+        btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+        setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
+        btn.highlight:SetAllPoints(btn)
+
+        btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
+        btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+        btn.text:SetJustifyH("LEFT")
+        btn.text:SetWordWrap(false)
+        btn.text:SetTextColor(0.12, 0.09, 0.05)
+
+        btn:SetScript("OnClick", function(self)
+            if onClick then onClick(self) end
+        end)
+        return btn
+    end
+
+    local function ToggleFilter(key)
+        DavesGatherDB.filters[key] = not DavesGatherDB.filters[key]
+        UpdateAllMenus()
+        if RefreshWorldMapPins then RefreshWorldMapPins() end
+    end
+
+    local toggleMaster = CreateMenuItem(-5, function() ToggleFilter("showPins") end)
+    local toggleOre = CreateMenuItem(-27, function() ToggleFilter("showOre") end)
+    local toggleHerb = CreateMenuItem(-49, function() ToggleFilter("showHerb") end)
+    local toggleCloth = CreateMenuItem(-71, function() ToggleFilter("showCloth") end)
+    local toggleOther = CreateMenuItem(-93, function() ToggleFilter("showOther") end)
+
+    local function UpdateMenu()
+        local function GetText(key, label)
+            return (DavesGatherDB.filters[key] and "|cff008800[x]|r " or "|cff888888[ ]|r ") .. label
+        end
+        toggleMaster.text:SetText(GetText("showPins", "Show Map Pins"))
+        toggleOre.text:SetText(GetText("showOre", "Ore (Mining)"))
+        toggleHerb.text:SetText(GetText("showHerb", "Flowers (Herbalism)"))
+        toggleCloth.text:SetText(GetText("showCloth", "Cloth (Mob Drops)"))
+        toggleOther.text:SetText(GetText("showOther", "Others (Fishing, etc)"))
+    end
+    table.insert(menuUpdateFuncs, UpdateMenu)
+
+    optionsBtn:SetScript("OnClick", function()
+        if optionsMenu:IsShown() then
+            optionsMenu:Hide()
+        else
+            UpdateMenu()
+            optionsMenu:Show()
+        end
+    end)
+    return optionsBtn, optionsMenu
+end
+
+-- Hook up map pins dropdown to World Map
+local function InitWorldMapDropdown()
+    local btn, menu = CreateMapPinsDropdown(WorldMapFrame, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -45, -20, 100)
+    WorldMapFrame:HookScript("OnHide", function() menu:Hide() end)
+    WorldMapFrame:HookScript("OnMouseDown", function() menu:Hide() end)
+end
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("PLAYER_LOGIN")
+initFrame:SetScript("OnEvent", InitWorldMapDropdown)
 
 -- =========================================================
 -- Gathering & Node Recording Logic
@@ -402,6 +521,12 @@ local function BuildGatherWindow()
     local close = CreateFrame("Button", nil, header, "UIPanelCloseButton")
     close:SetPoint("RIGHT", header, "RIGHT", -6, 0)
     close:SetScript("OnClick", function() frame:Hide() end)
+
+    local optionsBtn, optionsMenu = CreateMapPinsDropdown(frame, close, "RIGHT", "LEFT", -4, 0)
+    optionsBtn:SetParent(header)
+
+    frame:HookScript("OnHide", function() optionsMenu:Hide() end)
+    header:HookScript("OnMouseDown", function() optionsMenu:Hide() end)
 
     -- Filter Bar
     local filterBar = CreateFrame("Frame", nil, frame)
