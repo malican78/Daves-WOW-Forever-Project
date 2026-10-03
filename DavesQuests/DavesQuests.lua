@@ -19,6 +19,7 @@ if DavesQuestsDB.y == nil then DavesQuestsDB.y = -80 end
 if DavesQuestsDB.point == nil then DavesQuestsDB.point = "TOPRIGHT" end
 if DavesQuestsDB.hideBlizzTracker == nil then DavesQuestsDB.hideBlizzTracker = true end
 if DavesQuestsDB.lockWindow == nil then DavesQuestsDB.lockWindow = false end
+if DavesQuestsDB.isOpen == nil then DavesQuestsDB.isOpen = true end
 
 local questRows = {}
 local questWindow = nil
@@ -248,7 +249,7 @@ local function BuildQuestWindow()
 
     local close = CreateFrame("Button", nil, header, "UIPanelCloseButton")
     close:SetPoint("RIGHT", header, "RIGHT", -4, 0)
-    close:SetScript("OnClick", function() frame:Hide() end)
+    close:SetScript("OnClick", function() frame:Hide(); DavesQuestsDB.isOpen = false end)
 
     -- Options Dropdown Menu Button
     local optionsBtn = CreateFrame("Button", "DavesQuestsOptionsBtn", header, "UIPanelButtonTemplate")
@@ -373,10 +374,30 @@ local function BuildQuestWindow()
             -- Quest Title
             row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
             row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
-            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -8)
+            row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -75, -8)
             row.title:SetJustifyH("LEFT")
             row.title:SetWordWrap(true)
             row.title:SetTextColor(0.50, 0.22, 0.02)
+            
+            row.pinBtn = CreateFrame("Button", nil, row)
+            row.pinBtn:SetSize(60, 20)
+            row.pinBtn:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -6)
+            local pinText = row.pinBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            pinText:SetAllPoints()
+            pinText:SetJustifyH("RIGHT")
+            row.pinBtn:SetFontString(pinText)
+            
+            row.pinBtn:SetScript("OnClick", function(self)
+                local qID = row.questData and row.questData.questID
+                if not qID then return end
+                DavesQuestsDB.pinnedQuests = DavesQuestsDB.pinnedQuests or {}
+                if DavesQuestsDB.pinnedQuests[qID] then
+                    DavesQuestsDB.pinnedQuests[qID] = nil
+                else
+                    DavesQuestsDB.pinnedQuests[qID] = true
+                end
+                if questWindow then questWindow:RefreshQuests() end
+            end)
 
             -- Objective Summary Lines
             row.objText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -415,10 +436,34 @@ local function BuildQuestWindow()
         return questRows[index]
     end
 
+    local sectionHeaders = {}
+    local function GetSectionHeader(index)
+        if not sectionHeaders[index] then
+            local header = CreateFrame("Frame", nil, content)
+            header:SetSize(306, 24)
+            local text = header:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            text:SetPoint("LEFT", header, "LEFT", 10, 0)
+            text:SetTextColor(0.95, 0.82, 0.48)
+            header.text = text
+            
+            local line = header:CreateTexture(nil, "ARTWORK")
+            line:SetTexture("Interface\\Buttons\\WHITE8X8")
+            line:SetVertexColor(0.48, 0.36, 0.22, 0.5)
+            line:SetHeight(1)
+            line:SetPoint("LEFT", text, "RIGHT", 10, 0)
+            line:SetPoint("RIGHT", header, "RIGHT", -10, 0)
+            
+            sectionHeaders[index] = header
+        end
+        return sectionHeaders[index]
+    end
+
     function frame:RefreshQuests()
-        local quests = {}
+        local buckets = { current = {}, completed = {}, normal = {} }
         local numEntries = C_QuestLog.GetNumQuestLogEntries()
         local currentHeader = "World"
+        DavesQuestsDB.pinnedQuests = DavesQuestsDB.pinnedQuests or {}
+        local totalCount = 0
 
         for index = 1, numEntries do
             local info = C_QuestLog.GetInfo(index)
@@ -430,74 +475,113 @@ local function BuildQuestWindow()
                     local objectives = C_QuestLog.GetQuestObjectives(qID)
                     local isComplete = C_QuestLog.IsComplete(qID)
 
-                    table.insert(quests, {
+                    local qData = {
                         questID = qID,
                         title = info.title,
                         level = info.level,
                         header = currentHeader,
                         isComplete = isComplete,
                         objectives = objectives
-                    })
+                    }
+                    totalCount = totalCount + 1
+                    
+                    if DavesQuestsDB.pinnedQuests[qID] then
+                        table.insert(buckets.current, qData)
+                    elseif isComplete then
+                        table.insert(buckets.completed, qData)
+                    else
+                        table.insert(buckets.normal, qData)
+                    end
                 end
             end
         end
 
-        frame.subTitle:SetText(string.format("%d Active Quests", #quests))
+        frame.subTitle:SetText(string.format("%d Active Quests", totalCount))
 
-        if #quests == 0 then
+        if totalCount == 0 then
             frame.emptyText:Show()
         else
             frame.emptyText:Hide()
         end
 
         local currentY = 0
-        for i = 1, #quests do
-            local qData = quests[i]
-            local row = GetQuestRow(i)
-            row.questData = qData
+        local activeHeaderIndex = 1
+        local activeRowIndex = 1
 
-            -- Build Title with level and completed checkmark
-            local completedBadge = qData.isComplete and ("  " .. ICON_CHECK .. " |cff008800COMPLETED|r") or ""
-            row.title:SetText(string.format("[%d] %s%s", qData.level or 0, qData.title or "Quest", completedBadge))
+        local function RenderSection(title, qList)
+            if #qList == 0 then return end
+            
+            local header = GetSectionHeader(activeHeaderIndex)
+            header.text:SetText(title)
+            header:ClearAllPoints()
+            header:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -currentY)
+            header:Show()
+            activeHeaderIndex = activeHeaderIndex + 1
+            currentY = currentY + 30
+            
+            for i = 1, #qList do
+                local qData = qList[i]
+                local row = GetQuestRow(activeRowIndex)
+                row.questData = qData
 
-            -- Build Objective Lines
-            local objLines = {}
-            if qData.isComplete then
-                table.insert(objLines, ICON_CHECK .. " |cff007700Ready for turn-in!|r")
-            elseif qData.objectives and #qData.objectives > 0 then
-                for _, obj in ipairs(qData.objectives) do
-                    if obj.finished then
-                        table.insert(objLines, ICON_CHECK .. " |cff007700" .. (obj.text or "") .. "|r")
-                    else
-                        table.insert(objLines, ICON_UNCHECK .. " |cff111111" .. (obj.text or "") .. "|r")
-                    end
+                local completedBadge = qData.isComplete and ("  " .. ICON_CHECK .. " |cff008800COMPLETED|r") or ""
+                row.title:SetText(string.format("[%d] %s%s", qData.level or 0, qData.title or "Quest", completedBadge))
+                
+                if DavesQuestsDB.pinnedQuests[qData.questID] then
+                    row.pinBtn:SetText("[ Unpin ]")
+                    row.pinBtn:GetFontString():SetTextColor(0.95, 0.82, 0.48)
+                else
+                    row.pinBtn:SetText("[ Pin ]")
+                    row.pinBtn:GetFontString():SetTextColor(0.6, 0.6, 0.6)
                 end
-            else
-                table.insert(objLines, ICON_UNCHECK .. " |cff444444Quest in progress...|r")
+
+                local objLines = {}
+                if qData.isComplete then
+                    table.insert(objLines, ICON_CHECK .. " |cff007700Ready for turn-in!|r")
+                elseif qData.objectives and #qData.objectives > 0 then
+                    for _, obj in ipairs(qData.objectives) do
+                        if obj.finished then
+                            table.insert(objLines, ICON_CHECK .. " |cff007700" .. (obj.text or "") .. "|r")
+                        else
+                            table.insert(objLines, ICON_UNCHECK .. " |cff111111" .. (obj.text or "") .. "|r")
+                        end
+                    end
+                else
+                    table.insert(objLines, ICON_UNCHECK .. " |cff444444Quest in progress...|r")
+                end
+
+                local formattedObjs = table.concat(objLines, "\n")
+                row.objText:SetText(formattedObjs)
+                
+                -- row.title width handled via anchors now
+                row.objText:SetWidth(286)
+
+                local titleHeight = row.title:GetStringHeight() or 18
+                local objHeight = row.objText:GetStringHeight() or 22
+                local totalCardHeight = titleHeight + objHeight + 24
+                row:SetHeight(totalCardHeight)
+
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -currentY)
+                row:Show()
+
+                activeRowIndex = activeRowIndex + 1
+                currentY = currentY + totalCardHeight + 8
             end
-
-            local formattedObjs = table.concat(objLines, "\n")
-            row.objText:SetText(formattedObjs)
-
-            row.title:SetWidth(286)
-            row.objText:SetWidth(286)
-
-            local titleHeight = row.title:GetStringHeight() or 18
-            local objHeight = row.objText:GetStringHeight() or 22
-            local totalCardHeight = titleHeight + objHeight + 24
-            row:SetHeight(totalCardHeight)
-
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -currentY)
-            row:Show()
-
-            currentY = currentY + totalCardHeight + 8
+            currentY = currentY + 8
         end
+        
+        RenderSection("Current Quests", buckets.current)
+        RenderSection("Completed Quests", buckets.completed)
+        RenderSection("Active Quests", buckets.normal)
 
         content:SetHeight(math.max(1, currentY))
 
-        for i = #quests + 1, #questRows do
+        for i = activeRowIndex, #questRows do
             questRows[i]:Hide()
+        end
+        for i = activeHeaderIndex, #sectionHeaders do
+            sectionHeaders[i]:Hide()
         end
     end
 
@@ -513,9 +597,11 @@ local function ToggleQuestWindow()
 
     if questWindow:IsShown() then
         questWindow:Hide()
+        DavesQuestsDB.isOpen = false
     else
         questWindow:RefreshQuests()
         questWindow:Show()
+        DavesQuestsDB.isOpen = true
     end
 end
 
@@ -539,8 +625,15 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" or event == "EDIT_MODE_LAYOUTS_UPDATED" then
         SuppressBlizzardTracker()
 
-        if event == "PLAYER_LOGIN" and type(DavesMobileMenu_RegisterAddon) == "function" then
-            DavesMobileMenu_RegisterAddon("DavesQuests", "Dave's Quests", 134442, ToggleQuestWindow)
+        if event == "PLAYER_LOGIN" then
+            if type(DavesMobileMenu_RegisterAddon) == "function" then
+                DavesMobileMenu_RegisterAddon("DavesQuests", "Dave's Quests", 134442, ToggleQuestWindow)
+            end
+            if DavesQuestsDB.isOpen then
+                if not questWindow then BuildQuestWindow() end
+                questWindow:RefreshQuests()
+                questWindow:Show()
+            end
         end
     elseif questWindow and questWindow:IsShown() then
         questWindow:RefreshQuests()
