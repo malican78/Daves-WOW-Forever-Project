@@ -578,10 +578,13 @@ local function BuildQuestWindow()
                     }
                     totalCount = totalCount + 1
                     
-                    if DavesQuestsDB.pinnedQuests[qID] then
-                        table.insert(buckets.current, qData)
-                    elseif isComplete then
+                    if isComplete then
+                        if DavesQuestsDB.pinnedQuests[qID] then
+                            SetQuestPinned(qID, false)
+                        end
                         table.insert(buckets.completed, qData)
+                    elseif DavesQuestsDB.pinnedQuests[qID] then
+                        table.insert(buckets.current, qData)
                     else
                         table.insert(buckets.normal, qData)
                     end

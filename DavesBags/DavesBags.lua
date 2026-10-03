@@ -17,7 +17,7 @@ local FOOTER_HEIGHT = 32 -- Increased from 24 to fit suite shortcuts nicely
 local SECTION_HEADER_HEIGHT = 18
 
 -- View States
-local isCategoryView = false
+local isCategoryView = true
 local isShowingBank = false
 
 -- Forward Declarations
@@ -232,6 +232,7 @@ end
 
 local categoryToggleBtn = CreateBagMenuItem(bagActionsMenu, -5, function()
     isCategoryView = not isCategoryView
+    DavesBagsDB.isCategoryView = isCategoryView
     bagActionsMenu:Hide()
     UpdateBagGrid()
     UpdateBagActionsMenu()
@@ -942,6 +943,14 @@ eventFrame:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 local isBankOpen = false
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "ADDON_LOADED" then
+        local addonName = ...
+        if addonName == "DavesBags" then
+            if DavesBagsDB.isCategoryView ~= nil then
+                isCategoryView = DavesBagsDB.isCategoryView
+            end
+        end
+    end
     if event == "PLAYER_ENTERING_WORLD" or event == "ADDON_LOADED" then
         RegisterDefaultFooterAddons()
         if BagFrame and BagFrame.UpdateFooterMenu then
