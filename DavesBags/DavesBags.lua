@@ -20,6 +20,11 @@ local SECTION_HEADER_HEIGHT = 18
 local isCategoryView = false
 local isShowingBank = false
 
+-- Forward Declarations
+local UpdateBagGrid
+local SellAllJunk
+local UpdateBagActionsMenu
+
 -- Database Initialization
 DavesBagsDB = DavesBagsDB or {}
 DavesBagsDB.bankCache = DavesBagsDB.bankCache or {}
@@ -224,8 +229,6 @@ local function CreateBagMenuItem(parent, yOffset, onClick)
     end
     return btn
 end
-
-local UpdateBagActionsMenu
 
 local categoryToggleBtn = CreateBagMenuItem(bagActionsMenu, -5, function()
     isCategoryView = not isCategoryView
@@ -484,7 +487,7 @@ local function RegisterDefaultFooterAddons()
     end
 end
 
-local function SellAllJunk()
+function SellAllJunk()
     local totalProfit = 0
     local soldCount = 0
 
@@ -511,11 +514,6 @@ local function SellAllJunk()
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Bags]|r No grey items to sell.")
     end
 end
-
-sellJunkBtn:SetScript("OnClick", function()
-    bagActionsMenu:Hide()
-    SellAllJunk()
-end)
 
 -- =========================================================
 -- Bank Snapshot Caching
@@ -726,7 +724,7 @@ end
 -- =========================================================
 -- Grid Update & Layout
 -- =========================================================
-local function UpdateBagGrid()
+function UpdateBagGrid()
     local totalSlots = 0
     local freeSlots = 0
     local rawSlots = {}
@@ -1048,7 +1046,7 @@ local function ToggleUnifiedBag()
         BagFrame:Hide()
     else
         isShowingBank = false
-        bankToggleBtn:SetText("View Bank")
+        UpdateBagActionsMenu()
         UpdateBagGrid()
         if BagFrame and BagFrame.UpdateFooterMenu then
             BagFrame:UpdateFooterMenu()
