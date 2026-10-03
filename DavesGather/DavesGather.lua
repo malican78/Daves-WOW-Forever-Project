@@ -448,9 +448,9 @@ local function InitWorldMapDropdown()
     local parent = anchor and anchor:GetParent() or WorldMapFrame
     local btn, menu
     if anchor then
-        btn, menu = CreateMapPinsDropdown(parent, anchor, "RIGHT", "LEFT", -10, 0, 9000)
+        btn, menu = CreateMapPinsDropdown(parent, anchor, "RIGHT", "LEFT", -80, 0, 9000)
     else
-        btn, menu = CreateMapPinsDropdown(parent, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -75, -4, 9000)
+        btn, menu = CreateMapPinsDropdown(parent, WorldMapFrame, "TOPRIGHT", "TOPRIGHT", -145, -4, 9000)
     end
     
     -- Ensure the button draws fully above the map's artwork
