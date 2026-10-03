@@ -328,6 +328,101 @@ local function RefreshWorldMapPins()
     for i = activePinIndex, #mapPinsPool do
         mapPinsPool[i]:Hide()
     end
+    
+    if RefreshMinimapPins then RefreshMinimapPins() end
+end
+
+local HBD = LibStub("HereBeDragons-2.0", true)
+local HBDPins = LibStub("HereBeDragons-Pins-2.0", true)
+local minimapPinsPool = {}
+
+local function GetMinimapPin(index)
+    if not minimapPinsPool[index] then
+        local pin = CreateFrame("Button", nil, Minimap)
+        pin:SetSize(14, 14)
+        pin:EnableMouse(true)
+        
+        pin.bg = pin:CreateTexture(nil, "BACKGROUND")
+        pin.bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+        pin.bg:SetSize(14, 14)
+        pin.bg:SetPoint("CENTER", pin, "CENTER", 0, 0)
+        
+        pin.texture = pin:CreateTexture(nil, "ARTWORK")
+        pin.texture:SetSize(13, 13)
+        pin.texture:SetPoint("CENTER", pin, "CENTER", 0, 0)
+        
+        if pin.CreateMaskTexture then
+            local mask = pin:CreateMaskTexture()
+            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            mask:SetAllPoints(pin.texture)
+            pin.texture:AddMaskTexture(mask)
+        else
+            pin.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
+        
+        pin.border = pin:CreateTexture(nil, "OVERLAY")
+        pin.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+        pin.border:SetSize(36, 36)
+        pin.border:SetPoint("TOPLEFT", pin, "CENTER", -11, 11)
+        
+        pin.highlight = pin:CreateTexture(nil, "HIGHLIGHT")
+        pin.highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+        pin.highlight:SetBlendMode("ADD")
+        pin.highlight:SetSize(18, 18)
+        pin.highlight:SetPoint("CENTER", pin, "CENTER", 0, 0)
+        pin.highlight:SetVertexColor(1, 0.85, 0.30, 0.8)
+        
+        pin:SetScript("OnEnter", function(self)
+            if not self.nodeData then return end
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:AddLine(self.nodeData.name, 1, 0.82, 0)
+            GameTooltip:Show()
+        end)
+        pin:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        
+        minimapPinsPool[index] = pin
+    end
+    return minimapPinsPool[index]
+end
+
+local function RefreshMinimapPins()
+    if not HBDPins then return end
+    HBDPins:RemoveAllMinimapIcons(addonName)
+    
+    local mapID = C_Map.GetBestMapForUnit("player")
+    if not mapID or not DavesGatherDB.nodes[mapID] then
+        for _, pin in ipairs(minimapPinsPool) do pin:Hide() end
+        return
+    end
+
+    local nodes = DavesGatherDB.nodes[mapID]
+    local filters = GetFilters()
+    local activePinIndex = 1
+    
+    for i = 1, #nodes do
+        local node = nodes[i]
+        local prof = node.profession or "Gather"
+        local show = filters.showPins
+        if show then
+            if prof == "Mining" then show = filters.showOre
+            elseif prof == "Herbalism" then show = filters.showHerb
+            elseif prof == "Mob Drop" then show = filters.showCloth
+            else show = filters.showOther end
+        end
+        
+        if show then
+            local pin = GetMinimapPin(activePinIndex)
+            pin.nodeData = node
+            pin.texture:SetTexture(node.icon or 134400)
+            
+            HBDPins:AddMinimapIconMap(addonName, pin, mapID, node.x, node.y, true, true)
+            activePinIndex = activePinIndex + 1
+        end
+    end
+    
+    for i = activePinIndex, #minimapPinsPool do
+        minimapPinsPool[i]:Hide()
+    end
 end
 
 hooksecurefunc(WorldMapFrame, "OnMapChanged", RefreshWorldMapPins)
