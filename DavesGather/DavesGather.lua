@@ -212,16 +212,44 @@ mapPinsFrame:SetFrameStrata("HIGH")
 local function GetMapPin(index)
     if not mapPinsPool[index] then
         local pin = CreateFrame("Button", nil, mapPinsFrame)
-        pin:SetSize(16, 16)
+        pin:SetSize(20, 20)
         pin:EnableMouse(true)
 
-        pin.texture = pin:CreateTexture(nil, "ARTWORK")
-        pin.texture:SetAllPoints(pin)
+        -- Dark circular background backing
+        pin.bg = pin:CreateTexture(nil, "BACKGROUND")
+        pin.bg:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+        pin.bg:SetSize(20, 20)
+        pin.bg:SetPoint("CENTER", pin, "CENTER", 0, 0)
 
+        -- Item icon texture (nested neatly inside the circular ring)
+        pin.texture = pin:CreateTexture(nil, "ARTWORK")
+        pin.texture:SetSize(19, 19)
+        pin.texture:SetPoint("CENTER", pin, "CENTER", 0, 0)
+
+        -- Circular alpha mask for smooth round icon clipping
+        if pin.CreateMaskTexture then
+            local mask = pin:CreateMaskTexture()
+            mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+            mask:SetAllPoints(pin.texture)
+            pin.texture:AddMaskTexture(mask)
+            pin.mask = mask
+        else
+            pin.texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
+
+        -- Golden tracking circle border, precisely centered over the icon
         pin.border = pin:CreateTexture(nil, "OVERLAY")
         pin.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-        pin.border:SetPoint("TOPLEFT", pin, "TOPLEFT", -6, 5)
-        pin.border:SetPoint("BOTTOMRIGHT", pin, "BOTTOMRIGHT", 6, -5)
+        pin.border:SetSize(52, 52)
+        pin.border:SetPoint("TOPLEFT", pin, "CENTER", -16, 16)
+
+        -- Subtle circular glow on hover
+        pin.highlight = pin:CreateTexture(nil, "HIGHLIGHT")
+        pin.highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+        pin.highlight:SetBlendMode("ADD")
+        pin.highlight:SetSize(26, 26)
+        pin.highlight:SetPoint("CENTER", pin, "CENTER", 0, 0)
+        pin.highlight:SetVertexColor(1, 0.85, 0.30, 0.8)
 
         pin:SetScript("OnEnter", function(self)
             if not self.nodeData then return end
