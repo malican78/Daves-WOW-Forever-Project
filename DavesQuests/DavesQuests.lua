@@ -20,6 +20,7 @@ local function InitDB()
     if DavesQuestsDB.point == nil then DavesQuestsDB.point = "TOPRIGHT" end
     if DavesQuestsDB.hideBlizzTracker == nil then DavesQuestsDB.hideBlizzTracker = true end
     if DavesQuestsDB.showHUDTracker == nil then DavesQuestsDB.showHUDTracker = true end
+    if DavesQuestsDB.showMapPane == nil then DavesQuestsDB.showMapPane = true end
     if DavesQuestsDB.hudX == nil then DavesQuestsDB.hudX = -15 end
     if DavesQuestsDB.hudY == nil then DavesQuestsDB.hudY = -180 end
     if DavesQuestsDB.hudPoint == nil then DavesQuestsDB.hudPoint = "TOPRIGHT" end
@@ -31,10 +32,29 @@ local questWindow = nil
 local HUDTracker = nil
 local hudRows = {}
 
+-- Map & Selection State
+local selectedQuestID = nil
+local currentMapID = nil
+local mapTilePool = {}
+local questPinPool = {}
+local gatherPinPool = {}
+local playerPin = nil
+local mapPanel = nil
+local mapCanvas = nil
+local mapTitle = nil
+local mapDetailsText = nil
+local mapFallbackBg = nil
+
 -- Forward declarations
 local ToggleQuestWindow
+local OpenQuestWindow
+local SelectQuest
+local LoadZoneMap
+local RefreshMapPins
 local SuppressBlizzardTracker
 local BuildHUDTracker
+local BuildQuestWindow
+local UpdateWindowLayout
 
 -- =========================================================
 -- Theme Helper Functions
@@ -94,7 +114,6 @@ end
 -- =========================================================
 -- Robust Blizzard Tracker Suppression (Modern 11.0 & Classic)
 -- =========================================================
--- Hidden anchor parent: Frames parented to this hidden dummy frame cannot render on screen
 local hiddenParent = CreateFrame("Frame", "DavesQuestsHiddenParent", UIParent)
 hiddenParent:Hide()
 
@@ -111,14 +130,12 @@ local function SuppressTrackerFrame(frame)
         if frame.EnableMouse then frame:EnableMouse(false) end
         if frame.SetCollapsed then pcall(frame.SetCollapsed, frame, true) end
 
-        -- Reparent to hidden dummy if not in combat and frame is not protected
         if not InCombatLockdown or not InCombatLockdown() then
             if not frame:IsProtected() or not InCombatLockdown() then
                 frame:SetParent(hiddenParent)
             end
         end
     else
-        -- Restore original parent and visibility
         if frame._davesOriginalParent then
             if not InCombatLockdown or not InCombatLockdown() then
                 if not frame:IsProtected() or not InCombatLockdown() then
@@ -215,7 +232,6 @@ local function GetAllQuests()
                         end
                     end
 
-                    -- Legacy leader board fallback for classic clients exposing partial C_QuestLog
                     if #objectives == 0 and GetNumQuestLeaderBoards then
                         local numLeaderBoards = GetNumQuestLeaderBoards(index) or 0
                         for objIdx = 1, numLeaderBoards do
@@ -248,7 +264,6 @@ local function GetAllQuests()
             end
         end
     elseif GetNumQuestLogEntries then
-        -- Pure Legacy Classic Fallback
         local numEntries = GetNumQuestLogEntries() or 0
         local currentHeader = "World"
         for index = 1, numEntries do
@@ -348,6 +363,89 @@ local function ShowQuestObjectiveTooltip(frame, questData)
 end
 
 -- =========================================================
+-- Quest Map Helpers (POI coordinates & Map Layers)
+-- =========================================================
+local function GetMapForQuest(questID)
+    if not questID then return nil end
+    if C_QuestLog and C_QuestLog.GetMapForQuestPOIs then
+        local mID = C_QuestLog.GetMapForQuestPOIs(questID)
+        if mID and mID > 0 then return mID end
+    end
+    if C_TaskQuest and C_TaskQuest.GetQuestZoneID then
+        local mID = C_TaskQuest.GetQuestZoneID(questID)
+        if mID and mID > 0 then return mID end
+    end
+    if C_Map and C_Map.GetBestMapForUnit then
+        return C_Map.GetBestMapForUnit("player")
+    end
+    return nil
+end
+
+local function GetQuestsOnCurrentMap(mapID)
+    local results = {}
+    if not mapID then return results end
+
+    if C_QuestLog and C_QuestLog.GetQuestsOnMap then
+        local onMap = C_QuestLog.GetQuestsOnMap(mapID)
+        if onMap then
+            for _, q in ipairs(onMap) do
+                table.insert(results, {
+                    questID = q.questID,
+                    x = q.x,
+                    y = q.y,
+                })
+            end
+        end
+    end
+
+    -- Legacy Classic POI fallback
+    if #results == 0 and QuestPOIGetIconInfo then
+        local allQuests = GetAllQuests()
+        for _, q in ipairs(allQuests) do
+            if q.questID then
+                local completed, x, y = QuestPOIGetIconInfo(q.questID)
+                if x and y and x > 0 and y > 0 then
+                    table.insert(results, {
+                        questID = q.questID,
+                        x = x,
+                        y = y,
+                        completed = completed
+                    })
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+local function GetActiveQuestMapIDs()
+    local mapSet = {}
+    local mapList = {}
+
+    -- Player's current map first
+    if C_Map and C_Map.GetBestMapForUnit then
+        local pMap = C_Map.GetBestMapForUnit("player")
+        if pMap and pMap > 0 then
+            mapSet[pMap] = true
+            table.insert(mapList, pMap)
+        end
+    end
+
+    -- Maps for active quests
+    local allQuests = GetAllQuests()
+    for _, q in ipairs(allQuests) do
+        local mID = GetMapForQuest(q.questID)
+        if mID and mID > 0 and not mapSet[mID] then
+            mapSet[mID] = true
+            table.insert(mapList, mID)
+        end
+    end
+
+    return mapList
+end
+
+-- =========================================================
 -- Transparent HUD Quest Tracker (Replaces Default Tracker)
 -- =========================================================
 function BuildHUDTracker()
@@ -390,8 +488,9 @@ function BuildHUDTracker()
     dragHandle:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("Dave's Quests HUD Tracker", 1, 0.82, 0)
-        GameTooltip:AddLine("Drag with Left-Click to reposition.", 0.9, 0.9, 0.9)
-        GameTooltip:AddLine("<Right-Click: Open Quest Window>", 0.5, 0.8, 1)
+        GameTooltip:AddLine("Left-Click a quest to view on Quest Map.", 0.9, 0.9, 0.9)
+        GameTooltip:AddLine("Drag with Left-Click to reposition.", 0.7, 0.7, 0.7)
+        GameTooltip:AddLine("<Right-Click: Toggle Quest Window>", 0.5, 0.8, 1)
         GameTooltip:Show()
     end)
     dragHandle:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -445,14 +544,8 @@ function BuildHUDTracker()
                 if button == "RightButton" and IsAltKeyDown() then
                     ExportQuestToDavesNotes(self.questData)
                 elseif button == "LeftButton" then
-                    if QuestMapFrame_OpenToQuestDetails and self.questData.questID then
-                        QuestMapFrame_OpenToQuestDetails(self.questData.questID)
-                    elseif ShowUIPanel and QuestLogFrame then
-                        ShowUIPanel(QuestLogFrame)
-                        if self.questData.logIndex and SelectQuestLogEntry then
-                            SelectQuestLogEntry(self.questData.logIndex)
-                        end
-                    end
+                    -- Open Dave's Quests with this quest focused on the map
+                    OpenQuestWindow(self.questData.questID)
                 elseif button == "RightButton" and type(ToggleQuestWindow) == "function" then
                     ToggleQuestWindow()
                 end
@@ -471,7 +564,6 @@ function BuildHUDTracker()
 
         local quests = GetAllQuests()
 
-        -- If specific quests are watched, prioritize watched quests
         local watched = {}
         for _, q in ipairs(quests) do
             if q.isWatched then
@@ -543,13 +635,293 @@ function BuildHUDTracker()
 end
 
 -- =========================================================
--- Main Quest Window GUI (Dave's Warm Parchment Theme)
+-- Main Quest Window GUI (Dave's Warm Parchment Theme & Map)
 -- =========================================================
-local function BuildQuestWindow()
+local function GetMapTileTexture(index)
+    if not mapTilePool[index] then
+        local t = mapCanvas:CreateTexture(nil, "BACKGROUND", nil, -5)
+        mapTilePool[index] = t
+    end
+    return mapTilePool[index]
+end
+
+local function GetQuestPin(index)
+    if not questPinPool[index] then
+        local pin = CreateFrame("Button", nil, mapCanvas)
+        pin:SetSize(24, 24)
+        pin:SetFrameLevel(mapCanvas:GetFrameLevel() + 6)
+
+        pin.bg = pin:CreateTexture(nil, "BACKGROUND")
+        setTextureColor(pin.bg, 0.12, 0.10, 0.08, 0.95)
+        pin.bg:SetAllPoints(pin)
+        createBorder(pin, { 1, 0.82, 0.30 }, 2)
+
+        pin.numText = pin:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        pin.numText:SetPoint("CENTER", pin, "CENTER", 0, 0)
+        pin.numText:SetTextColor(1, 0.85, 0.35)
+
+        pin.highlight = pin:CreateTexture(nil, "OVERLAY")
+        setTextureColor(pin.highlight, 1, 0.85, 0.20, 0.40)
+        pin.highlight:SetAllPoints(pin)
+        pin.highlight:Hide()
+
+        pin:SetScript("OnEnter", function(self)
+            if self.questData then
+                ShowQuestObjectiveTooltip(self, self.questData)
+            end
+        end)
+        pin:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        pin:SetScript("OnClick", function(self)
+            if self.questID then
+                SelectQuest(self.questID)
+            end
+        end)
+
+        questPinPool[index] = pin
+    end
+    return questPinPool[index]
+end
+
+local function GetGatherPin(index)
+    if not gatherPinPool[index] then
+        local pin = CreateFrame("Button", nil, mapCanvas)
+        pin:SetSize(16, 16)
+        pin:SetFrameLevel(mapCanvas:GetFrameLevel() + 4)
+
+        pin.icon = pin:CreateTexture(nil, "ARTWORK")
+        pin.icon:SetAllPoints(pin)
+        createBorder(pin, { 0.2, 0.85, 0.2 }, 1)
+
+        pin:SetScript("OnEnter", function(self)
+            if self.nodeData then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine("|cffffd100[Gather]|r " .. (self.nodeData.name or "Resource"), 1, 0.82, 0)
+                GameTooltip:AddLine(string.format("%s: %s (x%d)", self.nodeData.zone or "", self.nodeData.subZone or "", self.nodeData.count or 1), 0.9, 0.9, 0.9)
+                GameTooltip:Show()
+            end
+        end)
+        pin:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        gatherPinPool[index] = pin
+    end
+    return gatherPinPool[index]
+end
+
+local function RefreshGatherPins(canvasW, canvasH)
+    if not DavesGatherDB or not DavesGatherDB.nodes or not currentMapID or not DavesGatherDB.nodes[currentMapID] then
+        for _, p in ipairs(gatherPinPool) do p:Hide() end
+        return
+    end
+
+    local nodes = DavesGatherDB.nodes[currentMapID]
+    local pinIdx = 1
+    local maxGatherPins = 35
+
+    for i = 1, math.min(#nodes, maxGatherPins) do
+        local node = nodes[i]
+        if node.x and node.y and node.x > 0 and node.y > 0 then
+            local p = GetGatherPin(pinIdx)
+            p.nodeData = node
+            p.icon:SetTexture(node.icon or 134400)
+            p:ClearAllPoints()
+            p:SetPoint("CENTER", mapCanvas, "TOPLEFT", node.x * canvasW, -node.y * canvasH)
+            p:Show()
+            pinIdx = pinIdx + 1
+        end
+    end
+
+    for i = pinIdx, #gatherPinPool do
+        gatherPinPool[i]:Hide()
+    end
+end
+
+function RefreshMapPins()
+    if not currentMapID or not mapCanvas or not mapCanvas:IsShown() then return end
+
+    local canvasW = mapCanvas:GetWidth()
+    local canvasH = mapCanvas:GetHeight()
+    if canvasW <= 0 or canvasH <= 0 then return end
+
+    local mapQuests = GetQuestsOnCurrentMap(currentMapID)
+    local allActiveQuests = GetAllQuests()
+    local questLookup = {}
+    for idx, q in ipairs(allActiveQuests) do
+        questLookup[q.questID] = { data = q, number = idx }
+    end
+
+    local pinIdx = 1
+    for _, mq in ipairs(mapQuests) do
+        local qInfo = questLookup[mq.questID]
+        local pin = GetQuestPin(pinIdx)
+        pin.questID = mq.questID
+        pin.questData = qInfo and qInfo.data
+
+        local num = qInfo and qInfo.number or pinIdx
+        if qInfo and qInfo.data and qInfo.data.isComplete then
+            pin.numText:SetText(ICON_CHECK)
+        else
+            pin.numText:SetText(tostring(num))
+        end
+
+        pin:ClearAllPoints()
+        pin:SetPoint("CENTER", mapCanvas, "TOPLEFT", mq.x * canvasW, -mq.y * canvasH)
+
+        if selectedQuestID and selectedQuestID == mq.questID then
+            pin.highlight:Show()
+            pin:SetSize(28, 28)
+            createBorder(pin, { 1, 0.95, 0.4 }, 3)
+        else
+            pin.highlight:Hide()
+            pin:SetSize(22, 22)
+            createBorder(pin, { 1, 0.82, 0.30 }, 2)
+        end
+
+        pin:Show()
+        pinIdx = pinIdx + 1
+    end
+
+    for i = pinIdx, #questPinPool do
+        questPinPool[i]:Hide()
+    end
+
+    -- Update Player Position Pin
+    if C_Map and C_Map.GetPlayerMapPosition then
+        local playerPos = C_Map.GetPlayerMapPosition(currentMapID, "player")
+        if playerPos and playerPin then
+            local px, py = playerPos:GetXY()
+            if px and py and px > 0 and py > 0 then
+                playerPin:ClearAllPoints()
+                playerPin:SetPoint("CENTER", mapCanvas, "TOPLEFT", px * canvasW, -py * canvasH)
+                if GetPlayerFacing then
+                    playerPin.arrow:SetRotation(GetPlayerFacing() or 0)
+                end
+                playerPin:Show()
+            else
+                playerPin:Hide()
+            end
+        elseif playerPin then
+            playerPin:Hide()
+        end
+    elseif playerPin then
+        playerPin:Hide()
+    end
+
+    -- Gather Synergy Pins
+    RefreshGatherPins(canvasW, canvasH)
+end
+
+function LoadZoneMap(mapID)
+    if not mapID or mapID <= 0 then return end
+    currentMapID = mapID
+
+    local mapInfo = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(mapID)
+    local zoneName = mapInfo and mapInfo.name or "Zone Map"
+    if mapTitle then
+        mapTitle:SetText(string.format("|cffffd100%s|r", zoneName))
+    end
+
+    local loadedTiles = false
+    if C_Map and C_Map.GetMapArtLayers and C_Map.GetMapArtLayerTextures and mapCanvas then
+        local layers = C_Map.GetMapArtLayers(mapID)
+        if layers and layers[1] then
+            local lInfo = layers[1]
+            local rows = lInfo.numDetailTilesRows or 3
+            local cols = lInfo.numDetailTilesCols or 4
+            local textures = C_Map.GetMapArtLayerTextures(mapID, 1)
+
+            if textures and #textures > 0 then
+                local canvasW = mapCanvas:GetWidth()
+                local canvasH = mapCanvas:GetHeight()
+                local tileW = canvasW / cols
+                local tileH = canvasH / rows
+
+                local idx = 1
+                for r = 0, rows - 1 do
+                    for c = 0, cols - 1 do
+                        if textures[idx] then
+                            local t = GetMapTileTexture(idx)
+                            t:ClearAllPoints()
+                            t:SetPoint("TOPLEFT", mapCanvas, "TOPLEFT", c * tileW, -r * tileH)
+                            t:SetSize(tileW, tileH)
+                            t:SetTexture(textures[idx])
+                            t:Show()
+                        end
+                        idx = idx + 1
+                    end
+                end
+
+                for i = idx, #mapTilePool do
+                    mapTilePool[i]:Hide()
+                end
+
+                loadedTiles = true
+            end
+        end
+    end
+
+    if mapFallbackBg then
+        if not loadedTiles then
+            for _, t in ipairs(mapTilePool) do t:Hide() end
+            mapFallbackBg:Show()
+        else
+            mapFallbackBg:Hide()
+        end
+    end
+
+    RefreshMapPins()
+end
+
+function SelectQuest(questID)
+    selectedQuestID = questID
+
+    local allQuests = GetAllQuests()
+    local selectedData = nil
+    for _, q in ipairs(allQuests) do
+        if q.questID == questID then
+            selectedData = q
+            break
+        end
+    end
+
+    -- Update Map to match selected quest's zone
+    if selectedData then
+        local qMap = GetMapForQuest(questID)
+        if qMap and qMap > 0 and qMap ~= currentMapID then
+            LoadZoneMap(qMap)
+        else
+            RefreshMapPins()
+        end
+
+        -- Update bottom card details
+        if mapDetailsText then
+            local objLines = {}
+            if selectedData.isComplete then
+                table.insert(objLines, ICON_CHECK .. " |cff008800Ready for turn-in!|r")
+            elseif selectedData.objectives and #selectedData.objectives > 0 then
+                for _, obj in ipairs(selectedData.objectives) do
+                    local mark = obj.finished and ICON_CHECK or ICON_UNCHECK
+                    local col = obj.finished and "|cff008800" or "|cff222222"
+                    table.insert(objLines, string.format("%s %s%s|r", mark, col, obj.text or ""))
+                end
+            else
+                table.insert(objLines, ICON_UNCHECK .. " |cff666666In progress...|r")
+            end
+
+            mapDetailsText:SetText(string.format("|cff552200[%d] %s|r\n%s", selectedData.level or 0, selectedData.title or "Quest", table.concat(objLines, "\n")))
+        end
+    end
+
+    -- Refresh quest list cards to reflect selection highlight
+    if questWindow and questWindow.RefreshQuests then
+        questWindow:RefreshQuests()
+    end
+end
+
+function BuildQuestWindow()
     if questWindow then return questWindow end
 
     local frame = CreateFrame("Frame", "DavesQuestsFrame", UIParent)
-    frame:SetSize(350, 480)
+    frame:SetSize(790, 530)
     frame:SetPoint(DavesQuestsDB.point or "TOPRIGHT", UIParent, DavesQuestsDB.point or "TOPRIGHT", DavesQuestsDB.x or -20, DavesQuestsDB.y or -80)
     frame:SetFrameStrata("HIGH")
     frame:SetClampedToScreen(true)
@@ -571,7 +943,6 @@ local function BuildQuestWindow()
     header.bg = header:CreateTexture(nil, "BACKGROUND")
     setTextureColor(header.bg, WINDOW_COLOR[1], WINDOW_COLOR[2], WINDOW_COLOR[3], 0.95)
     header.bg:SetAllPoints(header)
-
     createBorder(header, WINDOW_BORDER_COLOR, 2)
 
     header:SetScript("OnDragStart", function() frame:StartMoving() end)
@@ -590,7 +961,7 @@ local function BuildQuestWindow()
 
     local subTitle = header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     subTitle:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 12, 6)
-    subTitle:SetText("Active Quest Log")
+    subTitle:SetText("Quest Log & Live Map")
     subTitle:SetTextColor(0.9, 0.9, 0.9)
     frame.subTitle = subTitle
 
@@ -604,18 +975,29 @@ local function BuildQuestWindow()
     optionsBar:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, -2)
     optionsBar:SetHeight(26)
 
+    -- Toggle 1: Quest Map Pane
+    local mapCheck = CreateFrame("CheckButton", "DavesQuestsMapCheck", optionsBar, "UICheckButtonTemplate")
+    mapCheck:SetSize(22, 22)
+    mapCheck:SetPoint("LEFT", optionsBar, "LEFT", 8, 0)
+    _G[mapCheck:GetName() .. "Text"]:SetText("Quest Map")
+    _G[mapCheck:GetName() .. "Text"]:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
+    mapCheck:SetChecked(DavesQuestsDB.showMapPane == true)
+    mapCheck:SetScript("OnClick", function(self)
+        DavesQuestsDB.showMapPane = self:GetChecked()
+        UpdateWindowLayout()
+    end)
+
+    -- Toggle 2: HUD Tracker
     local hudCheck = CreateFrame("CheckButton", "DavesQuestsHUDCheck", optionsBar, "UICheckButtonTemplate")
     hudCheck:SetSize(22, 22)
-    hudCheck:SetPoint("LEFT", optionsBar, "LEFT", 8, 0)
+    hudCheck:SetPoint("LEFT", mapCheck, "RIGHT", 85, 0)
     _G[hudCheck:GetName() .. "Text"]:SetText("HUD Tracker")
     _G[hudCheck:GetName() .. "Text"]:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
     hudCheck:SetChecked(DavesQuestsDB.showHUDTracker == true)
     hudCheck:SetScript("OnClick", function(self)
         local isChecked = self:GetChecked()
         DavesQuestsDB.showHUDTracker = isChecked
-        if not HUDTracker then
-            BuildHUDTracker()
-        end
+        if not HUDTracker then BuildHUDTracker() end
         if isChecked then
             HUDTracker:Refresh()
             HUDTracker:Show()
@@ -624,6 +1006,7 @@ local function BuildQuestWindow()
         end
     end)
 
+    -- Toggle 3: Hide Default Tracker
     local blizzCheck = CreateFrame("CheckButton", "DavesQuestsBlizzCheck", optionsBar, "UICheckButtonTemplate")
     blizzCheck:SetSize(22, 22)
     blizzCheck:SetPoint("LEFT", hudCheck, "RIGHT", 95, 0)
@@ -631,18 +1014,155 @@ local function BuildQuestWindow()
     _G[blizzCheck:GetName() .. "Text"]:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
     blizzCheck:SetChecked(DavesQuestsDB.hideBlizzTracker == true)
     blizzCheck:SetScript("OnClick", function(self)
-        local isChecked = self:GetChecked()
-        DavesQuestsDB.hideBlizzTracker = isChecked
+        DavesQuestsDB.hideBlizzTracker = self:GetChecked()
         SuppressBlizzardTracker()
     end)
 
-    -- Scroll Area
-    local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", optionsBar, "BOTTOMLEFT", 6, -4)
-    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
+    -- =========================================================
+    -- Left Pane: Quest Map Panel
+    -- =========================================================
+    mapPanel = CreateFrame("Frame", nil, frame)
+    mapPanel:SetPoint("TOPLEFT", optionsBar, "BOTTOMLEFT", 8, -4)
+    mapPanel:SetSize(420, 444)
 
+    -- Map Navigation Bar
+    local mapTopBar = CreateFrame("Frame", nil, mapPanel)
+    mapTopBar:SetPoint("TOPLEFT", mapPanel, "TOPLEFT", 0, 0)
+    mapTopBar:SetPoint("TOPRIGHT", mapPanel, "TOPRIGHT", 0, 0)
+    mapTopBar:SetHeight(26)
+
+    local btnPrev = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnPrev:SetSize(22, 20)
+    btnPrev:SetPoint("LEFT", mapTopBar, "LEFT", 0, 0)
+    btnPrev:SetText("<")
+    btnPrev:SetScript("OnClick", function()
+        local maps = GetActiveQuestMapIDs()
+        if #maps == 0 then return end
+        local idx = 1
+        for i, m in ipairs(maps) do
+            if m == currentMapID then idx = i break end
+        end
+        local prevIdx = (idx > 1) and (idx - 1) or #maps
+        LoadZoneMap(maps[prevIdx])
+    end)
+
+    local btnNext = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnNext:SetSize(22, 20)
+    btnNext:SetPoint("LEFT", btnPrev, "RIGHT", 2, 0)
+    btnNext:SetText(">")
+    btnNext:SetScript("OnClick", function()
+        local maps = GetActiveQuestMapIDs()
+        if #maps == 0 then return end
+        local idx = 1
+        for i, m in ipairs(maps) do
+            if m == currentMapID then idx = i break end
+        end
+        local nextIdx = (idx < #maps) and (idx + 1) or 1
+        LoadZoneMap(maps[nextIdx])
+    end)
+
+    mapTitle = mapTopBar:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    mapTitle:SetPoint("LEFT", btnNext, "RIGHT", 6, 0)
+    mapTitle:SetPoint("RIGHT", mapTopBar, "RIGHT", -150, 0)
+    mapTitle:SetJustifyH("LEFT")
+    mapTitle:SetText("Zone Map")
+
+    local btnMyZone = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnMyZone:SetSize(68, 20)
+    btnMyZone:SetPoint("RIGHT", mapTopBar, "RIGHT", -68, 0)
+    btnMyZone:SetText("My Zone")
+    btnMyZone:SetScript("OnClick", function()
+        if C_Map and C_Map.GetBestMapForUnit then
+            local pMap = C_Map.GetBestMapForUnit("player")
+            if pMap then LoadZoneMap(pMap) end
+        end
+    end)
+
+    local btnFullMap = CreateFrame("Button", nil, mapTopBar, "UIPanelButtonTemplate")
+    btnFullMap:SetSize(64, 20)
+    btnFullMap:SetPoint("RIGHT", mapTopBar, "RIGHT", 0, 0)
+    btnFullMap:SetText("Full Map")
+    btnFullMap:SetScript("OnClick", function()
+        if ToggleWorldMap then
+            ToggleWorldMap()
+            if WorldMapFrame and WorldMapFrame.SetMapID and currentMapID then
+                WorldMapFrame:SetMapID(currentMapID)
+            end
+        end
+    end)
+
+    -- Map Canvas Viewport (4:3 Aspect Ratio)
+    mapCanvas = CreateFrame("Frame", nil, mapPanel)
+    mapCanvas:SetPoint("TOPLEFT", mapTopBar, "BOTTOMLEFT", 0, -2)
+    mapCanvas:SetSize(418, 314)
+    createBorder(mapCanvas, WINDOW_BORDER_COLOR, 2)
+
+    mapFallbackBg = mapCanvas:CreateTexture(nil, "BACKGROUND")
+    setTextureColor(mapFallbackBg, 0.90, 0.85, 0.72, 1.0)
+    mapFallbackBg:SetAllPoints(mapCanvas)
+
+    -- Player Location Pin with Heading Arrow
+    playerPin = CreateFrame("Frame", nil, mapCanvas)
+    playerPin:SetSize(22, 22)
+    playerPin:SetFrameLevel(mapCanvas:GetFrameLevel() + 10)
+
+    playerPin.arrow = playerPin:CreateTexture(nil, "OVERLAY")
+    playerPin.arrow:SetTexture("Interface\\Minimap\\MinimapArrow")
+    playerPin.arrow:SetAllPoints(playerPin)
+    playerPin:Hide()
+
+    -- Live Player GPS updater
+    local updateTimer = 0
+    mapCanvas:SetScript("OnUpdate", function(self, elapsed)
+        updateTimer = updateTimer + elapsed
+        if updateTimer >= 0.25 then
+            updateTimer = 0
+            if currentMapID and C_Map and C_Map.GetPlayerMapPosition then
+                local pos = C_Map.GetPlayerMapPosition(currentMapID, "player")
+                if pos then
+                    local px, py = pos:GetXY()
+                    if px and py and px > 0 and py > 0 then
+                        local cw = self:GetWidth()
+                        local ch = self:GetHeight()
+                        playerPin:ClearAllPoints()
+                        playerPin:SetPoint("CENTER", self, "TOPLEFT", px * cw, -py * ch)
+                        if GetPlayerFacing then
+                            playerPin.arrow:SetRotation(GetPlayerFacing() or 0)
+                        end
+                        playerPin:Show()
+                    else
+                        playerPin:Hide()
+                    end
+                else
+                    playerPin:Hide()
+                end
+            end
+        end
+    end)
+
+    -- Map Bottom Details Card
+    local detailsCard = CreateFrame("Frame", nil, mapPanel)
+    detailsCard:SetPoint("TOPLEFT", mapCanvas, "BOTTOMLEFT", 0, -4)
+    detailsCard:SetPoint("BOTTOMRIGHT", mapPanel, "BOTTOMRIGHT", 0, 0)
+
+    detailsCard.bg = detailsCard:CreateTexture(nil, "BACKGROUND")
+    setTextureColor(detailsCard.bg, 0.99, 0.98, 0.94, 1.0)
+    detailsCard.bg:SetAllPoints(detailsCard)
+    createBorder(detailsCard, { 0.45, 0.32, 0.18 }, 1)
+
+    mapDetailsText = detailsCard:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    mapDetailsText:SetPoint("TOPLEFT", detailsCard, "TOPLEFT", 8, -6)
+    mapDetailsText:SetPoint("BOTTOMRIGHT", detailsCard, "BOTTOMRIGHT", -8, 6)
+    mapDetailsText:SetJustifyH("LEFT")
+    mapDetailsText:SetJustifyV("TOP")
+    mapDetailsText:SetWordWrap(true)
+    mapDetailsText:SetText("|cff664422Select a quest on the right or a pin on the map to inspect.|r")
+
+    -- =========================================================
+    -- Right Pane: Scrollable Quest Log List
+    -- =========================================================
+    local scroll = CreateFrame("ScrollFrame", "DavesQuestsScrollFrame", frame, "UIPanelScrollFrameTemplate")
     local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(310, 1)
     scroll:SetScrollChild(content)
 
     frame.emptyText = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -652,14 +1172,39 @@ local function BuildQuestWindow()
     frame.emptyText:SetText("No active quests tracked.")
     frame.emptyText:SetTextColor(MUTED_GOLD_COLOR[1], MUTED_GOLD_COLOR[2], MUTED_GOLD_COLOR[3])
 
-    -- Row Generator
+    -- Layout Switcher (Two-Pane Map vs Single-Pane Compact)
+    function UpdateWindowLayout()
+        if DavesQuestsDB.showMapPane then
+            frame:SetSize(790, 530)
+            mapPanel:Show()
+            scroll:ClearAllPoints()
+            scroll:SetPoint("TOPLEFT", mapPanel, "TOPRIGHT", 10, 0)
+            scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
+            content:SetWidth(320)
+            if not currentMapID then
+                local pMap = (C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")) or 1
+                LoadZoneMap(pMap)
+            else
+                LoadZoneMap(currentMapID)
+            end
+        else
+            frame:SetSize(350, 530)
+            mapPanel:Hide()
+            scroll:ClearAllPoints()
+            scroll:SetPoint("TOPLEFT", optionsBar, "BOTTOMLEFT", 6, -4)
+            scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
+            content:SetWidth(306)
+        end
+        if frame.RefreshQuests then frame:RefreshQuests() end
+    end
+
+    -- Quest Row Generator
     local function GetQuestRow(index)
         if not questRows[index] then
             local row = CreateFrame("Button", nil, content)
-            row:SetWidth(306)
+            row:SetWidth(310)
             row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
-            -- Solid Parchment Card Background
             row.bg = row:CreateTexture(nil, "BACKGROUND")
             setTextureColor(row.bg, 0.99, 0.98, 0.94, 1.0)
             row.bg:SetAllPoints(row)
@@ -669,7 +1214,6 @@ local function BuildQuestWindow()
             setTextureColor(row.highlight, 1, 0.85, 0.40, 0.35)
             row.highlight:SetAllPoints(row)
 
-            -- Quest Title
             row.title = row:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
             row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -8)
             row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -8)
@@ -677,10 +1221,9 @@ local function BuildQuestWindow()
             row.title:SetWordWrap(true)
             row.title:SetTextColor(0.50, 0.22, 0.02)
 
-            -- Objective Summary Lines
             row.objText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             row.objText:SetPoint("TOPLEFT", row.title, "BOTTOMLEFT", 0, -6)
-            row.objText:SetWidth(286)
+            row.objText:SetWidth(290)
             row.objText:SetJustifyH("LEFT")
             row.objText:SetWordWrap(true)
             row.objText:SetSpacing(4)
@@ -701,14 +1244,7 @@ local function BuildQuestWindow()
                 if button == "RightButton" and IsAltKeyDown() then
                     ExportQuestToDavesNotes(self.questData)
                 elseif button == "LeftButton" then
-                    if QuestMapFrame_OpenToQuestDetails and self.questData.questID then
-                        QuestMapFrame_OpenToQuestDetails(self.questData.questID)
-                    elseif ShowUIPanel and QuestLogFrame then
-                        ShowUIPanel(QuestLogFrame)
-                        if self.questData.logIndex and SelectQuestLogEntry then
-                            SelectQuestLogEntry(self.questData.logIndex)
-                        end
-                    end
+                    SelectQuest(self.questData.questID)
                 end
             end)
 
@@ -734,8 +1270,17 @@ local function BuildQuestWindow()
             local row = GetQuestRow(i)
             row.questData = qData
 
+            local isSelected = (selectedQuestID and selectedQuestID == qData.questID)
+            if isSelected then
+                setTextureColor(row.bg, 1.0, 0.98, 0.90, 1.0)
+                createBorder(row, { 1, 0.82, 0.30 }, 2)
+            else
+                setTextureColor(row.bg, 0.99, 0.98, 0.94, 1.0)
+                createBorder(row, { 0.45, 0.32, 0.18 }, 1)
+            end
+
             local completedBadge = qData.isComplete and (" |cff008800(Complete)|r") or ""
-            row.title:SetText(string.format("[%d] %s%s", qData.level or 0, qData.title or "Quest", completedBadge))
+            row.title:SetText(string.format("[%d] %s%s", i, qData.title or "Quest", completedBadge))
 
             local objLines = {}
             if qData.isComplete then
@@ -754,14 +1299,16 @@ local function BuildQuestWindow()
 
             row.objText:SetText(table.concat(objLines, "\n"))
 
-            row.title:SetWidth(286)
-            row.objText:SetWidth(286)
+            local cardW = DavesQuestsDB.showMapPane and 318 or 306
+            row:SetWidth(cardW)
+            row.title:SetWidth(cardW - 20)
+            row.objText:SetWidth(cardW - 20)
 
             local tHeight = row.title:GetStringHeight() or 16
             local oHeight = row.objText:GetStringHeight() or 16
             local rowHeight = tHeight + oHeight + 22
 
-            row:SetSize(306, rowHeight)
+            row:SetSize(cardW, rowHeight)
             row:ClearAllPoints()
             row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -currentY)
             row:Show()
@@ -776,8 +1323,31 @@ local function BuildQuestWindow()
         content:SetHeight(math.max(1, currentY))
     end
 
+    UpdateWindowLayout()
+
     questWindow = frame
     return frame
+end
+
+function OpenQuestWindow(questID)
+    if not questWindow then
+        BuildQuestWindow()
+    end
+
+    if not questWindow:IsShown() then
+        questWindow:Show()
+    end
+    questWindow:Raise()
+
+    if questID then
+        SelectQuest(questID)
+    else
+        questWindow:RefreshQuests()
+        if DavesQuestsDB.showMapPane and not currentMapID then
+            local pMap = (C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")) or 1
+            LoadZoneMap(pMap)
+        end
+    end
 end
 
 function ToggleQuestWindow()
@@ -788,14 +1358,7 @@ function ToggleQuestWindow()
     if questWindow:IsShown() then
         questWindow:Hide()
     else
-        if DavesQuestsHUDCheck then
-            DavesQuestsHUDCheck:SetChecked(DavesQuestsDB.showHUDTracker == true)
-        end
-        if DavesQuestsBlizzCheck then
-            DavesQuestsBlizzCheck:SetChecked(DavesQuestsDB.hideBlizzTracker == true)
-        end
-        questWindow:RefreshQuests()
-        questWindow:Show()
+        OpenQuestWindow(selectedQuestID)
     end
 end
 
@@ -829,6 +1392,17 @@ local function HandleSlashCmd(msg)
         else
             DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[Dave's Quests]|r Default Blizzard tracker restored.")
         end
+    elseif cmd == "map" then
+        DavesQuestsDB.showMapPane = not DavesQuestsDB.showMapPane
+        if DavesQuestsMapCheck then
+            DavesQuestsMapCheck:SetChecked(DavesQuestsDB.showMapPane == true)
+        end
+        if UpdateWindowLayout then UpdateWindowLayout() end
+        if DavesQuestsDB.showMapPane then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[Dave's Quests]|r Quest Map pane shown.")
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff9900[Dave's Quests]|r Quest Map pane hidden.")
+        end
     else
         ToggleQuestWindow()
     end
@@ -848,6 +1422,7 @@ eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+eventFrame:RegisterEvent("ZONE_CHANGED")
 eventFrame:RegisterEvent("QUEST_LOG_UPDATE")
 eventFrame:RegisterEvent("QUEST_WATCH_UPDATE")
 eventFrame:RegisterEvent("QUEST_ACCEPTED")
@@ -864,6 +1439,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
             if DavesQuestsBlizzCheck then
                 DavesQuestsBlizzCheck:SetChecked(DavesQuestsDB.hideBlizzTracker == true)
+            end
+            if DavesQuestsMapCheck then
+                DavesQuestsMapCheck:SetChecked(DavesQuestsDB.showMapPane == true)
             end
             if not HUDTracker then
                 BuildHUDTracker()
@@ -894,7 +1472,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    -- For world transitions and quest state updates:
     SuppressBlizzardTracker()
 
     if HUDTracker and DavesQuestsDB.showHUDTracker then
@@ -903,6 +1480,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     if questWindow and questWindow:IsShown() then
         questWindow:RefreshQuests()
+        if DavesQuestsDB.showMapPane then
+            RefreshMapPins()
+        end
     end
 end)
 
