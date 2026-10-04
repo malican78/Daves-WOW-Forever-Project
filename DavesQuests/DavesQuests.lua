@@ -437,6 +437,31 @@ local function BuildQuestWindow()
                 if questWindow then questWindow:RefreshQuests() end
             end)
 
+            row.itemBtn = CreateFrame("Button", nil, row, "SecureActionButtonTemplate")
+            row.itemBtn:SetSize(28, 28)
+            row.itemBtn:SetPoint("TOPRIGHT", row.pinBtn, "BOTTOMRIGHT", -2, -4)
+            row.itemBtn:SetAttribute("type", "item")
+            
+            row.itemBtn.icon = row.itemBtn:CreateTexture(nil, "BACKGROUND")
+            row.itemBtn.icon:SetAllPoints()
+            
+            local itemNormalTex = row.itemBtn:CreateTexture(nil, "OVERLAY")
+            itemNormalTex:SetTexture("Interface\\Buttons\\UI-Quickslot2")
+            itemNormalTex:SetSize(46, 46)
+            itemNormalTex:SetPoint("CENTER", 0, 0)
+            row.itemBtn:SetNormalTexture(itemNormalTex)
+            
+            row.itemBtn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+            row.itemBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+            
+            row.itemBtn:SetScript("OnEnter", function(self)
+                if self.itemLink then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    GameTooltip:SetHyperlink(self.itemLink)
+                end
+            end)
+            row.itemBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
             row:SetMovable(true)
             row:RegisterForDrag("LeftButton")
             
@@ -567,6 +592,15 @@ local function BuildQuestWindow()
                     local qID = info.questID
                     local objectives = C_QuestLog.GetQuestObjectives(qID)
                     local isComplete = C_QuestLog.IsComplete(qID)
+                    
+                    local itemLink, itemIcon
+                    if GetQuestLogSpecialItemInfo then
+                        local name, link, rarity, icon = GetQuestLogSpecialItemInfo(index)
+                        if icon then
+                            itemLink = link
+                            itemIcon = icon
+                        end
+                    end
 
                     local qData = {
                         questID = qID,
@@ -574,7 +608,9 @@ local function BuildQuestWindow()
                         level = info.level,
                         header = currentHeader,
                         isComplete = isComplete,
-                        objectives = objectives
+                        objectives = objectives,
+                        itemLink = itemLink,
+                        itemIcon = itemIcon
                     }
                     totalCount = totalCount + 1
                     
@@ -649,12 +685,29 @@ local function BuildQuestWindow()
                 local formattedObjs = table.concat(objLines, "\n")
                 row.objText:SetText(formattedObjs)
                 
-                -- row.title width handled via anchors now
-                row.objText:SetWidth(286)
+                if qData.itemIcon then
+                    row.itemBtn:Show()
+                    row.itemBtn.icon:SetTexture(qData.itemIcon)
+                    row.itemBtn.itemLink = qData.itemLink
+                    if not InCombatLockdown() then
+                        row.itemBtn:SetAttribute("item", qData.itemLink)
+                    end
+                    row.objText:SetWidth(250)
+                else
+                    row.itemBtn:Hide()
+                    row.itemBtn.itemLink = nil
+                    if not InCombatLockdown() then
+                        row.itemBtn:SetAttribute("item", nil)
+                    end
+                    row.objText:SetWidth(286)
+                end
 
                 local titleHeight = row.title:GetStringHeight() or 18
                 local objHeight = row.objText:GetStringHeight() or 22
                 local totalCardHeight = titleHeight + objHeight + 24
+                if qData.itemIcon then
+                    totalCardHeight = math.max(totalCardHeight, 60)
+                end
                 row:SetHeight(totalCardHeight)
 
                 row:ClearAllPoints()
@@ -673,7 +726,7 @@ local function BuildQuestWindow()
             return idxA < idxB
         end)
         
-        RenderSection("Current Quests", buckets.current)
+        RenderSection("In Progress", buckets.current)
         RenderSection("Completed Quests", buckets.completed)
         RenderSection("Active Quests", buckets.normal)
 
@@ -791,6 +844,44 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 
+local objectiveCache = {}
+local function CheckForQuestProgress()
+    if not C_QuestLog then return false end
+    local numEntries = C_QuestLog.GetNumQuestLogEntries()
+    local progressDetected = false
+
+    for index = 1, numEntries do
+        local info = C_QuestLog.GetInfo(index)
+        if info and not info.isHeader and not info.isHidden then
+            local qID = info.questID
+            local objectives = C_QuestLog.GetQuestObjectives(qID)
+            
+            local currentCount = 0
+            if objectives then
+                for _, obj in ipairs(objectives) do
+                    currentCount = currentCount + (obj.numFulfilled or 0)
+                    if obj.finished then currentCount = currentCount + 1000 end
+                end
+            end
+            
+            local isComplete = C_QuestLog.IsComplete(qID)
+            if isComplete then currentCount = 99999 end
+
+            if objectiveCache[qID] then
+                if currentCount > objectiveCache[qID] then
+                    if not isComplete then
+                        SetQuestPinned(qID, true)
+                        progressDetected = true
+                    end
+                end
+            end
+            objectiveCache[qID] = currentCount
+        end
+    end
+    
+    return progressDetected
+end
+
 eventFrame:SetScript("OnEvent", function(self, event, arg1, ...)
     if event == "ADDON_LOADED" then
         TryHookMapFuncs()
@@ -808,10 +899,18 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, ...)
                 questWindow:Show()
             end
         end
-    elseif questWindow and questWindow:IsShown() then
-        questWindow:RefreshQuests()
+        CheckForQuestProgress() -- Initialize cache on login/enter world
+    else
+        if event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE" or event == "QUEST_ACCEPTED" then
+            CheckForQuestProgress()
+        end
+        if questWindow and questWindow:IsShown() then
+            questWindow:RefreshQuests()
+        end
     end
 end)
+
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 -- =========================================================
 -- Public API: Check if an item is needed for active quests

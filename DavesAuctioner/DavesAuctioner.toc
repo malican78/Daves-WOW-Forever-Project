@@ -1,0 +1,11 @@
+## Interface: 110002
+## Title: Dave's Auctioner
+## Notes: A lightweight, custom Auction House scanning and posting tool.
+## Author: Dave
+## Version: 1.0
+## SavedVariables: DavesAuctionerDB
+
+Core.lua
+Tooltips.lua
+Scanner.lua
+SellTab.lua
