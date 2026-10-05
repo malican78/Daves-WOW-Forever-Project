@@ -667,7 +667,7 @@ local function BuildGatherWindow()
         if btnText then btnText:SetWordWrap(false) end
         zoneDropdownBtn:SetText(text)
         local textWidth = (btnText and btnText:GetStringWidth()) or 80
-        zoneDropdownBtn:SetWidth(math.max(120, math.min(175, textWidth + 24)))
+        zoneDropdownBtn:SetWidth(math.max(85, math.min(150, textWidth + 24)))
     end
     SetZoneButtonText("All Zones")
 
@@ -675,8 +675,15 @@ local function BuildGatherWindow()
     local categoryDropdownBtn = CreateFrame("Button", "DavesGatherCategoryDropdownBtn", filterBar, "UIPanelButtonTemplate")
     categoryDropdownBtn:SetHeight(24)
     categoryDropdownBtn:SetPoint("LEFT", zoneDropdownBtn, "RIGHT", 4, 0)
-    categoryDropdownBtn:SetWidth(105)
-    categoryDropdownBtn:SetText("All Categories")
+    
+    local function SetCategoryButtonText(text)
+        local btnText = categoryDropdownBtn:GetFontString()
+        if btnText then btnText:SetWordWrap(false) end
+        categoryDropdownBtn:SetText(text)
+        local textWidth = (btnText and btnText:GetStringWidth()) or 80
+        categoryDropdownBtn:SetWidth(math.max(85, math.min(140, textWidth + 24)))
+    end
+    SetCategoryButtonText("All Categories")
     searchBox:SetHeight(24)
     searchBox:SetPoint("LEFT", categoryDropdownBtn, "RIGHT", 8, 0)
     searchBox:SetPoint("RIGHT", filterBar, "RIGHT", -10, 0)
@@ -927,7 +934,7 @@ local function BuildGatherWindow()
 
             btn:SetScript("OnClick", function()
                 selectedCategory = opt.id
-                categoryDropdownBtn:SetText(opt.id == "ALL" and "All Categories" or opt.name)
+                SetCategoryButtonText(opt.id == "ALL" and "All Categories" or opt.name)
                 CloseCategoryPicker()
                 frame:RefreshList()
             end)
