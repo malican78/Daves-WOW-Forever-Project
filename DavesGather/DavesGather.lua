@@ -19,6 +19,7 @@ local function GetFilters()
             showOre = true,
             showCloth = true,
             showLeather = true,
+            showFishing = true,
             showOther = true
         }
     end
@@ -46,7 +47,12 @@ local GATHER_SPELLS = {
     ["Extract Gas"] = "Engineering",
     ["Skinning"] = "Skinning",
     ["Fishing"] = "Fishing",
-    ["Mob Drop"] = "Mob Drop", -- Added to cleanly track cloth drops
+    ["Mob Drop"] = "Mob Drop",
+    ["Armor"] = "Armor",
+    ["Weapon"] = "Weapon",
+    ["Food"] = "Food",
+    ["Potion"] = "Potion",
+    ["Scroll"] = "Scroll",
 }
 
 
@@ -316,6 +322,7 @@ local function RefreshWorldMapPins()
             elseif prof == "Herbalism" then show = filters.showHerb
             elseif prof == "Mob Drop" then show = filters.showCloth
             elseif prof == "Skinning" then show = filters.showLeather
+            elseif prof == "Fishing" then show = filters.showFishing
             else show = filters.showOther end
         end
 
@@ -355,7 +362,7 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     if level then optionsBtn:SetFrameLevel(level) end
 
     local optionsMenu = CreateFrame("Frame", nil, parent)
-    optionsMenu:SetSize(165, 164)
+    optionsMenu:SetSize(165, 186)
     optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, -2)
     optionsMenu:SetFrameStrata("TOOLTIP")
     optionsMenu:SetToplevel(true)
@@ -399,13 +406,14 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
 
     local function ToggleAllFilters()
         local filters = GetFilters()
-        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showOther
+        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showFishing or filters.showOther
         local newState = not anyOn
         
         filters.showOre = newState
         filters.showHerb = newState
         filters.showCloth = newState
         filters.showLeather = newState
+        filters.showFishing = newState
         filters.showOther = newState
         if newState then filters.showPins = true end
         
@@ -418,8 +426,9 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     local toggleHerb = CreateMenuItem(-49, function() ToggleFilter("showHerb") end)
     local toggleCloth = CreateMenuItem(-71, function() ToggleFilter("showCloth") end)
     local toggleLeather = CreateMenuItem(-93, function() ToggleFilter("showLeather") end)
-    local toggleOther = CreateMenuItem(-115, function() ToggleFilter("showOther") end)
-    local toggleAllBtn = CreateMenuItem(-137, ToggleAllFilters)
+    local toggleFishing = CreateMenuItem(-115, function() ToggleFilter("showFishing") end)
+    local toggleOther = CreateMenuItem(-137, function() ToggleFilter("showOther") end)
+    local toggleAllBtn = CreateMenuItem(-159, ToggleAllFilters)
     
     toggleAllBtn.text:SetTextColor(0.85, 0.70, 0.40) -- Gold-ish color to stand out
 
@@ -433,9 +442,10 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
         toggleHerb.text:SetText(GetText("showHerb", "Flowers (Herbalism)"))
         toggleCloth.text:SetText(GetText("showCloth", "Cloth (Mob Drops)"))
         toggleLeather.text:SetText(GetText("showLeather", "Leather (Skinning)"))
-        toggleOther.text:SetText(GetText("showOther", "Others (Fishing, etc)"))
+        toggleFishing.text:SetText(GetText("showFishing", "Fish (Fishing)"))
+        toggleOther.text:SetText(GetText("showOther", "Others (Treasures, etc)"))
 
-        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showOther
+        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showFishing or filters.showOther
         toggleAllBtn.text:SetText(anyOn and "   [ Deselect All Categories ]" or "   [ Select All Categories ]")
     end
     table.insert(menuUpdateFuncs, UpdateMenu)
@@ -874,6 +884,7 @@ local function BuildGatherWindow()
             { id = "Mining", name = "Mining" },
             { id = "Skinning", name = "Leather (Skinning)" },
             { id = "Mob Drop", name = "Cloth (Mob Drops)" },
+            { id = "Fishing", name = "Fish (Fishing)" },
             { id = "Armor", name = "Armor" },
             { id = "Weapon", name = "Weapons" },
             { id = "Food", name = "Food & Drink" },
@@ -1037,7 +1048,7 @@ local function BuildGatherWindow()
                     local match = true
                     if selectedCategory ~= "ALL" then
                         if selectedCategory == "Other" then
-                            if prof == "Herbalism" or prof == "Mining" or prof == "Mob Drop" or prof == "Skinning" or prof == "Armor" or prof == "Weapon" or prof == "Food" or prof == "Potion" or prof == "Scroll" then
+                            if prof == "Herbalism" or prof == "Mining" or prof == "Mob Drop" or prof == "Skinning" or prof == "Fishing" or prof == "Armor" or prof == "Weapon" or prof == "Food" or prof == "Potion" or prof == "Scroll" then
                                 match = false
                             end
                         else
