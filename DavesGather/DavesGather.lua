@@ -1259,7 +1259,8 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, ...)
                 local icon, name = GetLootSlotInfo(i)
                 local link = GetLootSlotLink(i)
                 if name and link then
-                    local _, _, _, _, _, itemType, itemSubType, _, _, _, _, classID, subclassID = GetItemInfo(link)
+                    local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+                    local _, _, _, _, _, itemType, itemSubType, _, _, _, _, classID, subclassID = getInfo(link)
                     local trackAs = nil
                     
                     if classID == 2 then
