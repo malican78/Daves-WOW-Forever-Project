@@ -18,6 +18,7 @@ local function GetFilters()
             showHerb = true,
             showOre = true,
             showCloth = true,
+            showLeather = true,
             showOther = true
         }
     end
@@ -32,7 +33,9 @@ local nodeRows = {}
 
 -- Filter & Search State
 local selectedMapID = "ALL"
+local selectedCategory = "ALL"
 local currentSearchText = ""
+local expandedItems = {}
 
 -- Spells considered a node gather
 local GATHER_SPELLS = {
@@ -113,6 +116,8 @@ local function createBorder(frame, color, thickness)
     right:SetPoint("TOPRIGHT", frame, "TOPRIGHT")
     right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
     right:SetWidth(thickness)
+    
+    return {top, bottom, left, right}
 end
 
 local function applyWindowBackground(frame)
@@ -235,7 +240,7 @@ local function GetMapPin(index)
 
         -- Item icon texture (nested neatly inside the circular ring)
         pin.texture = pin:CreateTexture(nil, "ARTWORK")
-        pin.texture:SetSize(19, 19)
+        pin.texture:SetSize(20, 20)
         pin.texture:SetPoint("CENTER", pin, "CENTER", 0, 0)
 
         -- Circular alpha mask for smooth round icon clipping
@@ -252,8 +257,8 @@ local function GetMapPin(index)
         -- Golden tracking circle border, precisely centered over the icon
         pin.border = pin:CreateTexture(nil, "OVERLAY")
         pin.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-        pin.border:SetSize(52, 52)
-        pin.border:SetPoint("TOPLEFT", pin, "CENTER", -16, 16)
+        pin.border:SetSize(54, 54)
+        pin.border:SetPoint("TOPLEFT", pin, "TOPLEFT", -6, 6)
 
         -- Subtle circular glow on hover
         pin.highlight = pin:CreateTexture(nil, "HIGHLIGHT")
@@ -310,6 +315,7 @@ local function RefreshWorldMapPins()
             if prof == "Mining" then show = filters.showOre
             elseif prof == "Herbalism" then show = filters.showHerb
             elseif prof == "Mob Drop" then show = filters.showCloth
+            elseif prof == "Skinning" then show = filters.showLeather
             else show = filters.showOther end
         end
 
@@ -349,7 +355,7 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     if level then optionsBtn:SetFrameLevel(level) end
 
     local optionsMenu = CreateFrame("Frame", nil, parent)
-    optionsMenu:SetSize(165, 142)
+    optionsMenu:SetSize(165, 164)
     optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, -2)
     optionsMenu:SetFrameStrata("TOOLTIP")
     optionsMenu:SetToplevel(true)
@@ -393,12 +399,13 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
 
     local function ToggleAllFilters()
         local filters = GetFilters()
-        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showOther
+        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showOther
         local newState = not anyOn
         
         filters.showOre = newState
         filters.showHerb = newState
         filters.showCloth = newState
+        filters.showLeather = newState
         filters.showOther = newState
         if newState then filters.showPins = true end
         
@@ -410,8 +417,9 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     local toggleOre = CreateMenuItem(-27, function() ToggleFilter("showOre") end)
     local toggleHerb = CreateMenuItem(-49, function() ToggleFilter("showHerb") end)
     local toggleCloth = CreateMenuItem(-71, function() ToggleFilter("showCloth") end)
-    local toggleOther = CreateMenuItem(-93, function() ToggleFilter("showOther") end)
-    local toggleAllBtn = CreateMenuItem(-115, ToggleAllFilters)
+    local toggleLeather = CreateMenuItem(-93, function() ToggleFilter("showLeather") end)
+    local toggleOther = CreateMenuItem(-115, function() ToggleFilter("showOther") end)
+    local toggleAllBtn = CreateMenuItem(-137, ToggleAllFilters)
     
     toggleAllBtn.text:SetTextColor(0.85, 0.70, 0.40) -- Gold-ish color to stand out
 
@@ -424,20 +432,30 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
         toggleOre.text:SetText(GetText("showOre", "Ore (Mining)"))
         toggleHerb.text:SetText(GetText("showHerb", "Flowers (Herbalism)"))
         toggleCloth.text:SetText(GetText("showCloth", "Cloth (Mob Drops)"))
+        toggleLeather.text:SetText(GetText("showLeather", "Leather (Skinning)"))
         toggleOther.text:SetText(GetText("showOther", "Others (Fishing, etc)"))
 
-        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showOther
+        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showOther
         toggleAllBtn.text:SetText(anyOn and "   [ Deselect All Categories ]" or "   [ Select All Categories ]")
     end
     table.insert(menuUpdateFuncs, UpdateMenu)
 
-    optionsBtn:SetScript("OnClick", function()
-        if optionsMenu:IsShown() then
+    local function CheckHoverStatus()
+        if not optionsBtn:IsMouseOver() and not optionsMenu:IsMouseOver() then
             optionsMenu:Hide()
-        else
-            UpdateMenu()
-            optionsMenu:Show()
         end
+    end
+
+    optionsBtn:SetScript("OnEnter", function()
+        UpdateMenu()
+        optionsMenu:Show()
+    end)
+    optionsBtn:SetScript("OnLeave", function()
+        C_Timer.After(0.1, CheckHoverStatus)
+    end)
+    
+    optionsMenu:SetScript("OnLeave", function()
+        C_Timer.After(0.1, CheckHoverStatus)
     end)
     return optionsBtn, optionsMenu
 end
@@ -498,6 +516,7 @@ local function RecordGatheredNode(targetName, targetIcon)
     if existing then
         existing.count = (existing.count or 1) + 1
         existing.lastSeen = date("%m/%d/%y")
+        existing.lastSeenTime = time()
         if (not existing.subZone or existing.subZone == "") and subZone then
             existing.subZone = subZone
         end
@@ -510,7 +529,8 @@ local function RecordGatheredNode(targetName, targetIcon)
             subZone = subZone or "Wilderness",
             profession = GATHER_SPELLS[lastGatherSpell] or "Gather",
             count = 1,
-            firstSeen = date("%m/%d/%y")
+            firstSeen = date("%m/%d/%y"),
+            lastSeenTime = time()
         })
     end
 
@@ -524,6 +544,50 @@ end
 -- Browser Window (Consolidated Item List)
 -- =========================================================
 local function BuildGatherWindow()
+    local function UpdateNativeStyle()
+        local isNative = DavesGatherDB.filters and DavesGatherDB.filters.nativeTrackerStyle
+        if not gatherWindow then return end
+
+        if isNative then
+            if gatherWindow.background then gatherWindow.background:Hide() end
+            if gatherWindow.borders then for _, t in pairs(gatherWindow.borders) do t:Hide() end end
+            if gatherWindow.header then
+                if gatherWindow.header.background then gatherWindow.header.background:Hide() end
+                if gatherWindow.header.borders then for _, t in pairs(gatherWindow.header.borders) do t:Hide() end end
+            end
+            if gatherWindow.filterBar then gatherWindow.filterBar:Hide() end
+            if gatherWindow.scroll then gatherWindow.scroll:SetPoint("TOPLEFT", gatherWindow.header, "BOTTOMLEFT", 8, -6) end
+            if gatherWindow.subTitle then gatherWindow.subTitle:Hide() end
+        else
+            if gatherWindow.background then gatherWindow.background:Show() end
+            if gatherWindow.borders then for _, t in pairs(gatherWindow.borders) do t:Show() end end
+            if gatherWindow.header then
+                if gatherWindow.header.background then gatherWindow.header.background:Show() end
+                if gatherWindow.header.borders then for _, t in pairs(gatherWindow.header.borders) do t:Show() end end
+            end
+            if gatherWindow.filterBar then gatherWindow.filterBar:Show() end
+            if gatherWindow.scroll then gatherWindow.scroll:SetPoint("TOPLEFT", gatherWindow.filterBar, "BOTTOMLEFT", 8, -6) end
+            if gatherWindow.subTitle then gatherWindow.subTitle:Show() end
+        end
+
+        for _, row in pairs(nodeRows) do
+            if isNative then
+                if row.bg then row.bg:Hide() end
+                if row.highlight then row.highlight:Hide() end
+                if row.borders then for _, t in pairs(row.borders) do t:Hide() end end
+                if row.name then row.name:SetTextColor(1, 0.82, 0) end
+                if row.locations then row.locations:SetTextColor(0.8, 0.8, 0.8) end
+                if row.totalCount then row.totalCount:SetTextColor(0.8, 0.8, 0.8) end
+            else
+                if row.bg then row.bg:Show() end
+                if row.highlight then row.highlight:Show() end
+                if row.borders then for _, t in pairs(row.borders) do t:Show() end end
+                if row.name then row.name:SetTextColor(0.50, 0.22, 0.02) end
+                if row.locations then row.locations:SetTextColor(0.18, 0.15, 0.10) end
+                if row.totalCount then row.totalCount:SetTextColor(0.35, 0.25, 0.15) end
+            end
+        end
+    end
     local frame = CreateFrame("Frame", "DavesGatherFrame", UIParent)
     frame:SetSize(420, 500)
     frame:SetPoint("CENTER", UIParent, "CENTER", 50, 0)
@@ -533,18 +597,19 @@ local function BuildGatherWindow()
     frame:EnableMouse(true)
     frame:SetClampedToScreen(true)
     applyWindowBackground(frame)
-    createBorder(frame, WINDOW_BORDER_COLOR, 3)
+    frame.borders = createBorder(frame, WINDOW_BORDER_COLOR, 3)
     registerEscapeFrame("DavesGatherFrame")
 
     frame:SetScript("OnMouseDown", function() frame:Raise() end)
 
     -- Header Panel
     local header = CreateFrame("Frame", nil, frame)
+    frame.header = header
     header:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -4)
     header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
     header:SetHeight(38)
     applyWindowBackground(header)
-    createBorder(header, WINDOW_BORDER_COLOR, 2)
+    header.borders = createBorder(header, WINDOW_BORDER_COLOR, 2)
     makeDraggableRegion(header, frame)
 
     local title = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -563,11 +628,22 @@ local function BuildGatherWindow()
     local optionsBtn, optionsMenu = CreateMapPinsDropdown(frame, close, "RIGHT", "LEFT", -4, 0)
     optionsBtn:SetParent(header)
 
+    local nativeBtn = CreateFrame("Button", nil, header, "UIPanelButtonTemplate")
+    nativeBtn:SetSize(85, 22)
+    nativeBtn:SetPoint("RIGHT", optionsBtn, "LEFT", -4, 0)
+    nativeBtn:SetText("Native Style")
+    nativeBtn:SetScript("OnClick", function()
+        DavesGatherDB.filters = DavesGatherDB.filters or {}
+        DavesGatherDB.filters.nativeTrackerStyle = not DavesGatherDB.filters.nativeTrackerStyle
+        UpdateNativeStyle()
+    end)
+
     frame:HookScript("OnHide", function() optionsMenu:Hide() end)
     header:HookScript("OnMouseDown", function() optionsMenu:Hide() end)
 
     -- Filter Bar
     local filterBar = CreateFrame("Frame", nil, frame)
+    frame.filterBar = filterBar
     filterBar:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
     filterBar:SetPoint("TOPRIGHT", header, "BOTTOMRIGHT", 0, -4)
     filterBar:SetHeight(32)
@@ -586,8 +662,13 @@ local function BuildGatherWindow()
     SetZoneButtonText("All Zones")
 
     local searchBox = CreateFrame("EditBox", "DavesGatherSearchBox", filterBar, "SearchBoxTemplate")
+    local categoryDropdownBtn = CreateFrame("Button", "DavesGatherCategoryDropdownBtn", filterBar, "UIPanelButtonTemplate")
+    categoryDropdownBtn:SetHeight(24)
+    categoryDropdownBtn:SetPoint("LEFT", zoneDropdownBtn, "RIGHT", 4, 0)
+    categoryDropdownBtn:SetWidth(105)
+    categoryDropdownBtn:SetText("All Categories")
     searchBox:SetHeight(24)
-    searchBox:SetPoint("LEFT", zoneDropdownBtn, "RIGHT", 8, 0)
+    searchBox:SetPoint("LEFT", categoryDropdownBtn, "RIGHT", 8, 0)
     searchBox:SetPoint("RIGHT", filterBar, "RIGHT", -10, 0)
     searchBox:SetAutoFocus(false)
     searchBox:SetMaxLetters(30)
@@ -613,13 +694,23 @@ local function BuildGatherWindow()
     createBorder(zonePicker, WINDOW_BORDER_COLOR, 2)
     zonePicker:Hide()
 
-    local pickerScroll = CreateFrame("ScrollFrame", nil, zonePicker, "UIPanelScrollFrameTemplate")
+    local pickerScroll = CreateFrame("ScrollFrame", nil, zonePicker)
     pickerScroll:SetPoint("TOPLEFT", zonePicker, "TOPLEFT", 6, -6)
-    pickerScroll:SetPoint("BOTTOMRIGHT", zonePicker, "BOTTOMRIGHT", -24, 6)
+    pickerScroll:SetPoint("BOTTOMRIGHT", zonePicker, "BOTTOMRIGHT", -6, 6)
     pickerScroll:SetFrameLevel(zonePicker:GetFrameLevel() + 2)
 
+    pickerScroll:EnableMouseWheel(true)
+    pickerScroll:SetScript("OnMouseWheel", function(self, delta)
+        local curY = self:GetVerticalScroll()
+        local maxY = self:GetVerticalScrollRange()
+        local newY = curY - (delta * 22)
+        if newY < 0 then newY = 0 end
+        if newY > maxY then newY = maxY end
+        self:SetVerticalScroll(newY)
+    end)
+
     local pickerContent = CreateFrame("Frame", nil, pickerScroll)
-    pickerContent:SetSize(180, 1)
+    pickerContent:SetSize(198, 1)
     pickerContent:SetFrameLevel(pickerScroll:GetFrameLevel() + 1)
     pickerScroll:SetScrollChild(pickerContent)
 
@@ -631,7 +722,6 @@ local function BuildGatherWindow()
 
     local function OpenZonePicker()
         if zonePicker:IsShown() then
-            zonePicker:Hide()
             return
         end
 
@@ -672,7 +762,7 @@ local function BuildGatherWindow()
             local btn = pickerButtons[i]
             if not btn then
                 btn = CreateFrame("Button", nil, pickerContent)
-                btn:SetSize(175, 20)
+                btn:SetSize(198, 20)
                 btn:SetFrameLevel(pickerContent:GetFrameLevel() + 1)
 
                 btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
@@ -699,7 +789,11 @@ local function BuildGatherWindow()
 
             btn:SetScript("OnClick", function()
                 selectedMapID = opt.id
-                SetZoneButtonText(opt.id == "ALL" and "All Zones" or opt.name)
+                local btnText = zoneDropdownBtn:GetFontString()
+                if btnText then btnText:SetWordWrap(false) end
+                zoneDropdownBtn:SetText(opt.id == "ALL" and "All Zones" or opt.name)
+                local textWidth = (btnText and btnText:GetStringWidth()) or 80
+                zoneDropdownBtn:SetWidth(math.max(120, math.min(175, textWidth + 24)))
                 CloseZonePicker()
                 frame:RefreshList()
             end)
@@ -714,17 +808,164 @@ local function BuildGatherWindow()
         zonePicker:Show()
     end
 
-    zoneDropdownBtn:SetScript("OnClick", OpenZonePicker)
-    frame:HookScript("OnHide", CloseZonePicker)
+    local function CheckHoverStatus()
+        if not zoneDropdownBtn:IsMouseOver() and not zonePicker:IsMouseOver() then
+            CloseZonePicker()
+        end
+    end
+
+    zoneDropdownBtn:SetScript("OnEnter", OpenZonePicker)
+    zoneDropdownBtn:SetScript("OnLeave", function() C_Timer.After(0.1, CheckHoverStatus) end)
+    zonePicker:SetScript("OnLeave", function() C_Timer.After(0.1, CheckHoverStatus) end)
+
+    -- Category Picker Pop-up Menu
+    local categoryPicker = CreateFrame("Frame", nil, frame)
+    categoryPicker:SetSize(160, 210)
+    categoryPicker:SetPoint("TOPLEFT", categoryDropdownBtn, "BOTTOMLEFT", 0, -2)
+    categoryPicker:SetFrameStrata("FULLSCREEN_DIALOG")
+    categoryPicker:SetToplevel(true)
+    categoryPicker:SetFrameLevel(250)
+    categoryPicker:EnableMouse(true)
+
+    categoryPicker.solidBg = categoryPicker:CreateTexture(nil, "BACKGROUND", nil, -8)
+    setTextureColor(categoryPicker.solidBg, 0.98, 0.95, 0.86, 1.0)
+    categoryPicker.solidBg:SetAllPoints(categoryPicker)
+    createBorder(categoryPicker, WINDOW_BORDER_COLOR, 2)
+    categoryPicker:Hide()
+
+    local catPickerScroll = CreateFrame("ScrollFrame", nil, categoryPicker)
+    catPickerScroll:SetPoint("TOPLEFT", categoryPicker, "TOPLEFT", 6, -6)
+    catPickerScroll:SetPoint("BOTTOMRIGHT", categoryPicker, "BOTTOMRIGHT", -6, 6)
+    catPickerScroll:SetFrameLevel(categoryPicker:GetFrameLevel() + 2)
+
+    catPickerScroll:EnableMouseWheel(true)
+    catPickerScroll:SetScript("OnMouseWheel", function(self, delta)
+        local curY = self:GetVerticalScroll()
+        local maxY = self:GetVerticalScrollRange()
+        local newY = curY - (delta * 22)
+        if newY < 0 then newY = 0 end
+        if newY > maxY then newY = maxY end
+        self:SetVerticalScroll(newY)
+    end)
+
+    local catPickerContent = CreateFrame("Frame", nil, catPickerScroll)
+    catPickerContent:SetSize(148, 1)
+    catPickerContent:SetFrameLevel(catPickerScroll:GetFrameLevel() + 1)
+    catPickerScroll:SetScrollChild(catPickerContent)
+
+    local catPickerButtons = {}
+
+    local function CloseCategoryPicker()
+        categoryPicker:Hide()
+    end
+
+    local function OpenCategoryPicker()
+        if categoryPicker:IsShown() then
+            return
+        end
+
+        categoryPicker:SetFrameStrata("FULLSCREEN_DIALOG")
+        categoryPicker:SetFrameLevel(250)
+        categoryPicker:Raise()
+
+        local options = {
+            { id = "ALL", name = "All Categories" },
+            { id = "Herbalism", name = "Herbalism" },
+            { id = "Mining", name = "Mining" },
+            { id = "Skinning", name = "Leather (Skinning)" },
+            { id = "Mob Drop", name = "Cloth (Mob Drops)" },
+            { id = "Armor", name = "Armor" },
+            { id = "Weapon", name = "Weapons" },
+            { id = "Food", name = "Food & Drink" },
+            { id = "Potion", name = "Potions" },
+            { id = "Scroll", name = "Scrolls" },
+            { id = "Other", name = "Other" }
+        }
+
+        catPickerContent:SetHeight(#options * 22)
+
+        for i = 1, #options do
+            local opt = options[i]
+            local btn = catPickerButtons[i]
+            if not btn then
+                btn = CreateFrame("Button", nil, catPickerContent)
+                btn:SetSize(148, 20)
+                btn:SetFrameLevel(catPickerContent:GetFrameLevel() + 1)
+
+                btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+                setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
+                btn.highlight:SetAllPoints(btn)
+
+                btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
+                btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+                btn.text:SetJustifyH("LEFT")
+                btn.text:SetWordWrap(false)
+                catPickerButtons[i] = btn
+            end
+
+            btn:ClearAllPoints()
+            btn:SetPoint("TOPLEFT", catPickerContent, "TOPLEFT", 0, -(i - 1) * 22)
+            btn.text:SetText(opt.name)
+
+            if selectedCategory == opt.id then
+                btn.text:SetTextColor(0.85, 0.40, 0.05)
+            else
+                btn.text:SetTextColor(0.12, 0.09, 0.05)
+            end
+
+            btn:SetScript("OnClick", function()
+                selectedCategory = opt.id
+                categoryDropdownBtn:SetText(opt.id == "ALL" and "All Categories" or opt.name)
+                CloseCategoryPicker()
+                frame:RefreshList()
+            end)
+
+            btn:Show()
+        end
+
+        for i = #options + 1, #catPickerButtons do
+            catPickerButtons[i]:Hide()
+        end
+
+        categoryPicker:Show()
+    end
+
+    local function CheckCatHoverStatus()
+        if not categoryDropdownBtn:IsMouseOver() and not categoryPicker:IsMouseOver() then
+            CloseCategoryPicker()
+        end
+    end
+
+    categoryDropdownBtn:SetScript("OnEnter", OpenCategoryPicker)
+    categoryDropdownBtn:SetScript("OnLeave", function() C_Timer.After(0.1, CheckCatHoverStatus) end)
+    categoryPicker:SetScript("OnLeave", function() C_Timer.After(0.1, CheckCatHoverStatus) end)
+
+    frame:HookScript("OnHide", function() 
+        CloseZonePicker()
+        CloseCategoryPicker() 
+    end)
 
     -- Scroll Area
-    local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
+    local scroll = CreateFrame("ScrollFrame", nil, frame)
+    frame.scroll = scroll
     scroll:SetPoint("TOPLEFT", filterBar, "BOTTOMLEFT", 8, -6)
-    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 12)
+    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -8, 12)
     scroll:HookScript("OnMouseDown", CloseZonePicker)
 
+    -- Native mouse wheel scrolling
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local curY = self:GetVerticalScroll()
+        local maxY = self:GetVerticalScrollRange()
+        local newY = curY - (delta * 40)
+        if newY < 0 then newY = 0 end
+        if newY > maxY then newY = maxY end
+        self:SetVerticalScroll(newY)
+    end)
+
     local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(365, 1)
+    content:SetSize(395, 1)
     scroll:SetScrollChild(content)
 
     frame.emptyText = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -738,13 +979,13 @@ local function BuildGatherWindow()
     local function GetRow(index)
         if not nodeRows[index] then
             local row = CreateFrame("Button", nil, content)
-            row:SetWidth(365)
-            row:RegisterForClicks("RightButtonUp")
+            row:SetWidth(395)
+            row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
             row.bg = row:CreateTexture(nil, "BACKGROUND")
             setTextureColor(row.bg, 0.98, 0.95, 0.86, 1.0)
             row.bg:SetAllPoints(row)
-            createBorder(row, { 0.55, 0.42, 0.25 }, 1)
+            row.borders = createBorder(row, { 0.55, 0.42, 0.25 }, 1)
 
             row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
             setTextureColor(row.highlight, 1, 0.82, 0.30, 0.2)
@@ -767,7 +1008,7 @@ local function BuildGatherWindow()
             -- Locations block
             row.locations = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             row.locations:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -4)
-            row.locations:SetWidth(290)
+            row.locations:SetWidth(320)
             row.locations:SetJustifyH("LEFT")
             row.locations:SetWordWrap(true)
             row.locations:SetSpacing(3)
@@ -790,10 +1031,22 @@ local function BuildGatherWindow()
                 for _, node in ipairs(nodes) do
                     local nodeName = node.name or "Unknown Node"
                     local subZone = node.subZone or "Wilderness"
+                    local prof = node.profession or "Gather"
+
+                    -- Category filter
+                    local match = true
+                    if selectedCategory ~= "ALL" then
+                        if selectedCategory == "Other" then
+                            if prof == "Herbalism" or prof == "Mining" or prof == "Mob Drop" or prof == "Skinning" or prof == "Armor" or prof == "Weapon" or prof == "Food" or prof == "Potion" or prof == "Scroll" then
+                                match = false
+                            end
+                        else
+                            if prof ~= selectedCategory then match = false end
+                        end
+                    end
 
                     -- Search text filtering
-                    local match = true
-                    if currentSearchText ~= "" then
+                    if match and currentSearchText ~= "" then
                         local lName = string.lower(nodeName)
                         local lSub = string.lower(subZone)
                         local lZone = string.lower(zoneName)
@@ -824,10 +1077,12 @@ local function BuildGatherWindow()
                             g.locationCounts[locKey] = {
                                 zone = zoneName,
                                 subZone = subZone,
-                                count = count
+                                count = count,
+                                lastSeenTime = node.lastSeenTime or 0
                             }
                         else
                             g.locationCounts[locKey].count = g.locationCounts[locKey].count + count
+                            g.locationCounts[locKey].lastSeenTime = math.max(g.locationCounts[locKey].lastSeenTime or 0, node.lastSeenTime or 0)
                         end
                     end
                 end
@@ -841,7 +1096,7 @@ local function BuildGatherWindow()
             for _, loc in pairs(item.locationCounts) do
                 table.insert(locList, loc)
             end
-            table.sort(locList, function(a, b) return a.count > b.count end)
+            table.sort(locList, function(a, b) if (a.lastSeenTime or 0) == (b.lastSeenTime or 0) then return a.count > b.count else return (a.lastSeenTime or 0) > (b.lastSeenTime or 0) end end)
             item.locations = locList
             table.insert(itemList, item)
         end
@@ -867,17 +1122,27 @@ local function BuildGatherWindow()
             row.totalCount:SetText(string.format("|cffffd100x%d Total|r", itemData.totalCount))
 
             -- Build location string list
+            local isExpanded = expandedItems[itemData.name]
             local locLines = {}
-            for _, loc in ipairs(itemData.locations) do
+            for idx, loc in ipairs(itemData.locations) do
+                if idx > 1 and not isExpanded then break end
+
+                local prefix = "• "
+                if idx == 1 and not isExpanded and #itemData.locations > 1 then
+                    prefix = "• |cff4488ff[+]|r "
+                elseif idx == 1 and isExpanded and #itemData.locations > 1 then
+                    prefix = "• |cff884444[-]|r "
+                end
+
                 if selectedMapID == "ALL" then
-                    table.insert(locLines, string.format("• |cff664422%s:|r %s (|cff111111x%d|r)", loc.zone, loc.subZone, loc.count))
+                    table.insert(locLines, string.format("%s|cff664422%s:|r %s (|cff111111x%d|r)", prefix, loc.zone, loc.subZone, loc.count))
                 else
-                    table.insert(locLines, string.format("• %s (|cff111111x%d|r)", loc.subZone, loc.count))
+                    table.insert(locLines, string.format("%s%s (|cff111111x%d|r)", prefix, loc.subZone, loc.count))
                 end
             end
 
             row.locations:SetText(table.concat(locLines, "\n"))
-            row.locations:SetWidth(290)
+            row.locations:SetWidth(320)
 
             -- Dynamically scale card height to fit all location lines
             local locHeight = row.locations:GetStringHeight() or 18
@@ -890,6 +1155,9 @@ local function BuildGatherWindow()
             row:SetScript("OnClick", function(self, button)
                 if button == "RightButton" and IsAltKeyDown() then
                     ExportGroupedNodeToDavesNotes(self.itemData)
+                elseif button == "LeftButton" then
+                    expandedItems[self.itemData.name] = not expandedItems[self.itemData.name]
+                    frame:RefreshList()
                 end
             end)
 
@@ -897,6 +1165,7 @@ local function BuildGatherWindow()
             currentY = currentY + cardHeight + 6
         end
 
+        UpdateNativeStyle()
         content:SetHeight(math.max(1, currentY))
 
         for i = #itemList + 1, #nodeRows do
@@ -972,16 +1241,39 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, ...)
             end
             lastGatherSpell = nil
             
-        -- Scenario B: Check for dropped cloth items from regular mob kills
+        -- Scenario B: Check for dropped items from regular mob kills
         else
             local numItems = GetNumLootItems()
             for i = 1, numItems do
                 local icon, name = GetLootSlotInfo(i)
-                if name and (TRACKED_CLOTH[name] or (string.find(name, "Cloth") and not (string.find(name, "Boots") or string.find(name, "Robe") or string.find(name, "Belt") or string.find(name, "Vest") or string.find(name, "Pants") or string.find(name, "Gloves")))) then
-                    -- Temporarily override profession context for the database record
-                    lastGatherSpell = "Mob Drop"
-                    RecordGatheredNode(name, icon)
-                    lastGatherSpell = nil
+                local link = GetLootSlotLink(i)
+                if name and link then
+                    local _, _, _, _, _, itemType, itemSubType, _, _, _, _, classID, subclassID = GetItemInfo(link)
+                    local trackAs = nil
+                    
+                    if classID == 2 then
+                        trackAs = "Weapon"
+                    elseif classID == 4 then
+                        trackAs = "Armor"
+                    elseif classID == 0 then
+                        if itemSubType == "Food & Drink" or string.find(name, "Food") then
+                            trackAs = "Food"
+                        elseif itemSubType == "Potion" or string.find(name, "Potion") then
+                            trackAs = "Potion"
+                        elseif itemSubType == "Scroll" or string.find(name, "Scroll") then
+                            trackAs = "Scroll"
+                        end
+                    end
+                    
+                    if not trackAs and (TRACKED_CLOTH[name] or (string.find(name, "Cloth") and not (string.find(name, "Boots") or string.find(name, "Robe") or string.find(name, "Belt") or string.find(name, "Vest") or string.find(name, "Pants") or string.find(name, "Gloves")))) then
+                        trackAs = "Mob Drop"
+                    end
+                    
+                    if trackAs then
+                        lastGatherSpell = trackAs
+                        RecordGatheredNode(name, icon)
+                        lastGatherSpell = nil
+                    end
                 end
             end
         end
