@@ -11,10 +11,13 @@ local function FormatMoney(copperAmount)
     local s = math.floor((copperAmount % 10000) / 100)
     local c = copperAmount % 100
     
+    -- Round copper to 2 decimal places as requested
+    local cFormatted = (c == math.floor(c)) and tostring(c) or string.format("%.2f", c)
+    
     local str = ""
     if g > 0 then str = str .. "|cffffd700" .. g .. "g|r " end
     if s > 0 then str = str .. "|cffc7c7cf" .. s .. "s|r " end
-    if c > 0 or str == "" then str = str .. "|cffeda55f" .. c .. "c|r" end
+    if c > 0 or str == "" then str = str .. "|cffeda55f" .. cFormatted .. "c|r" end
     return str:match("^%s*(.-)%s*$") -- Trim whitespace
 end
 

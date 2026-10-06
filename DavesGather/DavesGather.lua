@@ -318,12 +318,10 @@ local function RefreshWorldMapPins()
         local filters = GetFilters()
         local show = filters.showPins
         if show then
-            if prof == "Mining" then show = filters.showOre
-            elseif prof == "Herbalism" then show = filters.showHerb
-            elseif prof == "Mob Drop" then show = filters.showCloth
-            elseif prof == "Skinning" then show = filters.showLeather
-            elseif prof == "Fishing" then show = filters.showFishing
-            else show = filters.showOther end
+            local filterKey = "show_" .. prof
+            if filters[filterKey] == false then
+                show = false
+            end
         end
 
         if show then
@@ -375,78 +373,128 @@ local function CreateMapPinsDropdown(parent, anchorFrame, anchorPoint, anchorRel
     createBorder(optionsMenu, WINDOW_BORDER_COLOR, 2)
     optionsMenu:Hide()
 
-    local function CreateMenuItem(yOffset, onClick)
-        local btn = CreateFrame("Button", nil, optionsMenu)
-        btn:SetSize(155, 20)
-        btn:SetPoint("TOPLEFT", optionsMenu, "TOPLEFT", 5, yOffset)
+    local menuItemPool = {}
+    local function GetMenuItem(index)
+        if not menuItemPool[index] then
+            local btn = CreateFrame("Button", nil, optionsMenu)
+            btn:SetSize(155, 20)
 
-        btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
-        setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
-        btn.highlight:SetAllPoints(btn)
+            btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+            setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
+            btn.highlight:SetAllPoints(btn)
 
-        btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
-        btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
-        btn.text:SetJustifyH("LEFT")
-        btn.text:SetWordWrap(false)
-        btn.text:SetTextColor(0.12, 0.09, 0.05)
-
-        btn:SetScript("OnClick", function(self)
-            if onClick then onClick(self) end
-        end)
-        return btn
+            btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
+            btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+            btn.text:SetJustifyH("LEFT")
+            btn.text:SetWordWrap(false)
+            btn.text:SetTextColor(0.12, 0.09, 0.05)
+            menuItemPool[index] = btn
+        end
+        return menuItemPool[index]
     end
 
     local function ToggleFilter(key)
         local filters = GetFilters()
-        filters[key] = not filters[key]
+        if filters[key] == false then
+            filters[key] = true
+        else
+            filters[key] = false
+        end
         UpdateAllMenus()
         if RefreshWorldMapPins then RefreshWorldMapPins() end
     end
+
+    local currentDynamicCategories = {}
 
     local function ToggleAllFilters()
         local filters = GetFilters()
-        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showFishing or filters.showOther
+        
+        local anyOn = false
+        for _, cat in ipairs(currentDynamicCategories) do
+            if filters["show_" .. cat.id] ~= false then
+                anyOn = true
+                break
+            end
+        end
+        
         local newState = not anyOn
+        for _, cat in ipairs(currentDynamicCategories) do
+            filters["show_" .. cat.id] = newState
+        end
         
-        filters.showOre = newState
-        filters.showHerb = newState
-        filters.showCloth = newState
-        filters.showLeather = newState
-        filters.showFishing = newState
-        filters.showOther = newState
         if newState then filters.showPins = true end
-        
         UpdateAllMenus()
         if RefreshWorldMapPins then RefreshWorldMapPins() end
     end
 
-    local toggleMaster = CreateMenuItem(-5, function() ToggleFilter("showPins") end)
-    local toggleOre = CreateMenuItem(-27, function() ToggleFilter("showOre") end)
-    local toggleHerb = CreateMenuItem(-49, function() ToggleFilter("showHerb") end)
-    local toggleCloth = CreateMenuItem(-71, function() ToggleFilter("showCloth") end)
-    local toggleLeather = CreateMenuItem(-93, function() ToggleFilter("showLeather") end)
-    local toggleFishing = CreateMenuItem(-115, function() ToggleFilter("showFishing") end)
-    local toggleOther = CreateMenuItem(-137, function() ToggleFilter("showOther") end)
-    local toggleAllBtn = CreateMenuItem(-159, ToggleAllFilters)
-    
-    toggleAllBtn.text:SetTextColor(0.85, 0.70, 0.40) -- Gold-ish color to stand out
-
     local function UpdateMenu()
         local filters = GetFilters()
-        local function GetText(key, label)
-            return (filters[key] and "|cff008800[x]|r " or "|cff888888[ ]|r ") .. label
+        
+        local options = {}
+        local foundCategories = {}
+        if DavesGatherDB and DavesGatherDB.nodes then
+            for mapID, nodes in pairs(DavesGatherDB.nodes) do
+                for _, node in ipairs(nodes) do
+                    local prof = node.profession or "Gather"
+                    if not foundCategories[prof] then
+                        foundCategories[prof] = true
+                        table.insert(options, { id = prof, name = prof })
+                    end
+                end
+            end
         end
-        toggleMaster.text:SetText(GetText("showPins", "Show Map Pins"))
-        toggleOre.text:SetText(GetText("showOre", "Ore (Mining)"))
-        toggleHerb.text:SetText(GetText("showHerb", "Flowers (Herbalism)"))
-        toggleCloth.text:SetText(GetText("showCloth", "Cloth (Mob Drops)"))
-        toggleLeather.text:SetText(GetText("showLeather", "Leather (Skinning)"))
-        toggleFishing.text:SetText(GetText("showFishing", "Fish (Fishing)"))
-        toggleOther.text:SetText(GetText("showOther", "Others (Treasures, etc)"))
+        table.sort(options, function(a, b) return a.name < b.name end)
+        currentDynamicCategories = options
+        
+        local function GetText(key, label)
+            return (filters[key] ~= false and "|cff008800[x]|r " or "|cff888888[ ]|r ") .. label
+        end
 
-        local anyOn = filters.showOre or filters.showHerb or filters.showCloth or filters.showLeather or filters.showFishing or filters.showOther
-        toggleAllBtn.text:SetText(anyOn and "   [ Deselect All Categories ]" or "   [ Select All Categories ]")
+        local totalItems = #options + 2
+        optionsMenu:SetHeight(10 + (totalItems * 22))
+
+        local activeIndex = 1
+        
+        -- Master toggle
+        local masterBtn = GetMenuItem(activeIndex)
+        masterBtn:SetPoint("TOPLEFT", optionsMenu, "TOPLEFT", 5, -5)
+        masterBtn.text:SetText(GetText("showPins", "Show Map Pins"))
+        masterBtn:SetScript("OnClick", function() ToggleFilter("showPins") end)
+        masterBtn.text:SetTextColor(0.12, 0.09, 0.05)
+        masterBtn:Show()
+        activeIndex = activeIndex + 1
+
+        -- Dynamic Categories
+        local anyOn = false
+        for i, cat in ipairs(options) do
+            local yOffset = -5 - ((activeIndex - 1) * 22)
+            local btn = GetMenuItem(activeIndex)
+            btn:SetPoint("TOPLEFT", optionsMenu, "TOPLEFT", 5, yOffset)
+            
+            local filterKey = "show_" .. cat.id
+            if filters[filterKey] ~= false then anyOn = true end
+            
+            btn.text:SetText(GetText(filterKey, cat.name))
+            btn:SetScript("OnClick", function() ToggleFilter(filterKey) end)
+            btn.text:SetTextColor(0.12, 0.09, 0.05)
+            btn:Show()
+            activeIndex = activeIndex + 1
+        end
+        
+        -- Select All Toggle
+        local allBtn = GetMenuItem(activeIndex)
+        local yOffset = -5 - ((activeIndex - 1) * 22)
+        allBtn:SetPoint("TOPLEFT", optionsMenu, "TOPLEFT", 5, yOffset)
+        allBtn.text:SetText(anyOn and "   [ Deselect All Categories ]" or "   [ Select All Categories ]")
+        allBtn:SetScript("OnClick", ToggleAllFilters)
+        allBtn.text:SetTextColor(0.85, 0.70, 0.40)
+        allBtn:Show()
+        activeIndex = activeIndex + 1
+        
+        for i = activeIndex, #menuItemPool do
+            menuItemPool[i]:Hide()
+        end
     end
     table.insert(menuUpdateFuncs, UpdateMenu)
 
@@ -494,7 +542,7 @@ initFrame:SetScript("OnEvent", InitWorldMapDropdown)
 -- =========================================================
 -- Gathering & Node Recording Logic
 -- =========================================================
-local function RecordGatheredNode(targetName, targetIcon)
+local function RecordGatheredNode(targetName, targetIcon, category)
     local mapID = C_Map.GetBestMapForUnit("player")
     if not mapID then return end
 
@@ -537,7 +585,7 @@ local function RecordGatheredNode(targetName, targetIcon)
             x = x,
             y = y,
             subZone = subZone or "Wilderness",
-            profession = GATHER_SPELLS[lastGatherSpell] or "Gather",
+            profession = category or GATHER_SPELLS[lastGatherSpell] or "Gather",
             count = 1,
             firstSeen = date("%m/%d/%y"),
             lastSeenTime = time()
@@ -588,6 +636,7 @@ local function BuildGatherWindow()
                 if row.name then row.name:SetTextColor(1, 0.82, 0) end
                 if row.locations then row.locations:SetTextColor(0.8, 0.8, 0.8) end
                 if row.totalCount then row.totalCount:SetTextColor(0.8, 0.8, 0.8) end
+                if row.category then row.category:SetTextColor(0.6, 0.6, 0.6) end
             else
                 if row.bg then row.bg:Show() end
                 if row.highlight then row.highlight:Show() end
@@ -595,6 +644,7 @@ local function BuildGatherWindow()
                 if row.name then row.name:SetTextColor(0.50, 0.22, 0.02) end
                 if row.locations then row.locations:SetTextColor(0.18, 0.15, 0.10) end
                 if row.totalCount then row.totalCount:SetTextColor(0.35, 0.25, 0.15) end
+                if row.category then row.category:SetTextColor(0.45, 0.35, 0.25) end
             end
         end
     end
@@ -637,19 +687,91 @@ local function BuildGatherWindow()
 
     local optionsBtn, optionsMenu = CreateMapPinsDropdown(frame, close, "RIGHT", "LEFT", -4, 0)
     optionsBtn:SetParent(header)
+    
+    local settingsBtn = CreateFrame("Button", nil, header, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(85, 22)
+    settingsBtn:SetPoint("RIGHT", optionsBtn, "LEFT", -4, 0)
+    settingsBtn:SetText("Settings v")
+    
+    local settingsMenu = CreateFrame("Frame", nil, header)
+    settingsMenu:SetSize(160, 52)
+    settingsMenu:SetPoint("TOPRIGHT", settingsBtn, "BOTTOMRIGHT", 0, -2)
+    settingsMenu:SetFrameStrata("TOOLTIP")
+    settingsMenu:SetToplevel(true)
+    settingsMenu:SetFrameLevel(250)
+    settingsMenu:EnableMouse(true)
+    
+    settingsMenu.solidBg = settingsMenu:CreateTexture(nil, "BACKGROUND", nil, -8)
+    setTextureColor(settingsMenu.solidBg, 0.98, 0.95, 0.86, 1.0)
+    settingsMenu.solidBg:SetAllPoints(settingsMenu)
+    createBorder(settingsMenu, WINDOW_BORDER_COLOR, 2)
+    settingsMenu:Hide()
+    
+    local function CreateSettingsItem(yOffset, onClick)
+        local btn = CreateFrame("Button", nil, settingsMenu)
+        btn:SetSize(150, 20)
+        btn:SetPoint("TOPLEFT", settingsMenu, "TOPLEFT", 5, yOffset)
+        btn.highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+        setTextureColor(btn.highlight, 0.85, 0.70, 0.40, 0.4)
+        btn.highlight:SetAllPoints(btn)
+        btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        btn.text:SetPoint("LEFT", btn, "LEFT", 6, 0)
+        btn.text:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+        btn.text:SetJustifyH("LEFT")
+        btn.text:SetTextColor(0.12, 0.09, 0.05)
+        btn:SetScript("OnClick", onClick)
+        return btn
+    end
 
-    local nativeBtn = CreateFrame("Button", nil, header, "UIPanelButtonTemplate")
-    nativeBtn:SetSize(85, 22)
-    nativeBtn:SetPoint("RIGHT", optionsBtn, "LEFT", -4, 0)
-    nativeBtn:SetText("Native Style")
-    nativeBtn:SetScript("OnClick", function()
+    local toggleNative = CreateSettingsItem(-5, function()
         DavesGatherDB.filters = DavesGatherDB.filters or {}
         DavesGatherDB.filters.nativeTrackerStyle = not DavesGatherDB.filters.nativeTrackerStyle
         UpdateNativeStyle()
+        if settingsMenu.updateText then settingsMenu.updateText() end
     end)
 
-    frame:HookScript("OnHide", function() optionsMenu:Hide() end)
-    header:HookScript("OnMouseDown", function() optionsMenu:Hide() end)
+    StaticPopupDialogs["DAVESGATHER_CONFIRM_PURGE"] = {
+        text = "Are you sure you want to delete ALL gathered item data?",
+        button1 = "Yes",
+        button2 = "No",
+        OnAccept = function()
+            DavesGatherDB.nodes = {}
+            if RefreshWorldMapPins then RefreshWorldMapPins() end
+            if gatherWindow and gatherWindow.RefreshList then
+                gatherWindow:RefreshList()
+            end
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+    }
+
+    local purgeDataBtn = CreateSettingsItem(-27, function()
+        settingsMenu:Hide()
+        StaticPopup_Show("DAVESGATHER_CONFIRM_PURGE")
+    end)
+    purgeDataBtn.text:SetText("|cffcc0000[!] Purge Database|r")
+
+    settingsMenu.updateText = function()
+        local isNative = DavesGatherDB.filters and DavesGatherDB.filters.nativeTrackerStyle
+        toggleNative.text:SetText((isNative and "|cff008800[x]|r " or "|cff888888[ ]|r ") .. "Native Style")
+    end
+
+    local function CheckSettingsHover()
+        if not settingsBtn:IsMouseOver() and not settingsMenu:IsMouseOver() then
+            settingsMenu:Hide()
+        end
+    end
+
+    settingsBtn:SetScript("OnEnter", function()
+        settingsMenu.updateText()
+        settingsMenu:Show()
+    end)
+    settingsBtn:SetScript("OnLeave", function() C_Timer.After(0.1, CheckSettingsHover) end)
+    settingsMenu:SetScript("OnLeave", function() C_Timer.After(0.1, CheckSettingsHover) end)
+
+    frame:HookScript("OnHide", function() optionsMenu:Hide(); settingsMenu:Hide(); end)
+    header:HookScript("OnMouseDown", function() optionsMenu:Hide(); settingsMenu:Hide(); end)
 
     -- Filter Bar
     local filterBar = CreateFrame("Frame", nil, frame)
@@ -886,19 +1008,25 @@ local function BuildGatherWindow()
         categoryPicker:Raise()
 
         local options = {
-            { id = "ALL", name = "All Categories" },
-            { id = "Herbalism", name = "Herbalism" },
-            { id = "Mining", name = "Mining" },
-            { id = "Skinning", name = "Leather (Skinning)" },
-            { id = "Mob Drop", name = "Cloth (Mob Drops)" },
-            { id = "Fishing", name = "Fish (Fishing)" },
-            { id = "Armor", name = "Armor" },
-            { id = "Weapon", name = "Weapons" },
-            { id = "Food", name = "Food & Drink" },
-            { id = "Potion", name = "Potions" },
-            { id = "Scroll", name = "Scrolls" },
-            { id = "Other", name = "Other" }
+            { id = "ALL", name = "All Categories" }
         }
+
+        local foundCategories = {}
+        for mapID, nodes in pairs(DavesGatherDB.nodes) do
+            for _, node in ipairs(nodes) do
+                local prof = node.profession or "Gather"
+                if not foundCategories[prof] then
+                    foundCategories[prof] = true
+                    table.insert(options, { id = prof, name = prof })
+                end
+            end
+        end
+
+        table.sort(options, function(a, b) 
+            if a.id == "ALL" then return true end
+            if b.id == "ALL" then return false end
+            return a.name < b.name 
+        end)
 
         catPickerContent:SetHeight(#options * 22)
 
@@ -1022,6 +1150,11 @@ local function BuildGatherWindow()
             row.totalCount = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             row.totalCount:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -8)
             row.totalCount:SetTextColor(0.35, 0.25, 0.15)
+            
+            row.category = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.category:SetPoint("TOPRIGHT", row.totalCount, "BOTTOMRIGHT", 0, -2)
+            row.category:SetTextColor(0.45, 0.35, 0.25)
+            row.category:SetJustifyH("RIGHT")
 
             -- Locations block
             row.locations = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1054,13 +1187,7 @@ local function BuildGatherWindow()
                     -- Category filter
                     local match = true
                     if selectedCategory ~= "ALL" then
-                        if selectedCategory == "Other" then
-                            if prof == "Herbalism" or prof == "Mining" or prof == "Mob Drop" or prof == "Skinning" or prof == "Fishing" or prof == "Armor" or prof == "Weapon" or prof == "Food" or prof == "Potion" or prof == "Scroll" then
-                                match = false
-                            end
-                        else
-                            if prof ~= selectedCategory then match = false end
-                        end
+                        if prof ~= selectedCategory then match = false end
                     end
 
                     -- Search text filtering
@@ -1138,6 +1265,7 @@ local function BuildGatherWindow()
             row.icon:SetTexture(itemData.icon)
             row.name:SetText(itemData.name)
             row.totalCount:SetText(string.format("|cffffd100x%d Total|r", itemData.totalCount))
+            row.category:SetText(itemData.profession or "Gather")
 
             -- Build location string list
             local isExpanded = expandedItems[itemData.name]
@@ -1173,10 +1301,32 @@ local function BuildGatherWindow()
             row:SetScript("OnClick", function(self, button)
                 if button == "RightButton" and IsAltKeyDown() then
                     ExportGroupedNodeToDavesNotes(self.itemData)
+                elseif button == "LeftButton" and IsShiftKeyDown() then
+                    local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+                    local _, link = getInfo(self.itemData.name)
+                    if link and ChatEdit_InsertLink then
+                        ChatEdit_InsertLink(link)
+                    end
                 elseif button == "LeftButton" then
                     expandedItems[self.itemData.name] = not expandedItems[self.itemData.name]
                     frame:RefreshList()
                 end
+            end)
+
+            row:SetScript("OnEnter", function(self)
+                local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+                local _, link = getInfo(self.itemData.name)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                if link then
+                    GameTooltip:SetHyperlink(link)
+                else
+                    GameTooltip:AddLine(self.itemData.name, 1, 1, 1)
+                    GameTooltip:Show()
+                end
+            end)
+
+            row:SetScript("OnLeave", function()
+                GameTooltip:Hide()
             end)
 
             row:Show()
@@ -1245,57 +1395,37 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, ...)
         end
 
     elseif event == "LOOT_OPENED" or event == "LOOT_READY" then
-        local maxWait = (lastGatherSpell == "Fishing") and 22 or 3.5
-        
-        -- Scenario A: Standard node gather logic
-        if lastGatherSpell and (GetTime() - lastGatherTime) < maxWait then
-            local numItems = GetNumLootItems()
-            for i = 1, numItems do
-                local icon, name = GetLootSlotInfo(i)
-                if name and name ~= "" then
-                    RecordGatheredNode(name, icon)
-                    break
-                end
-            end
-            lastGatherSpell = nil
+        local numItems = GetNumLootItems()
+        for i = 1, numItems do
+            local icon, name = GetLootSlotInfo(i)
+            local link = GetLootSlotLink(i)
             
-        -- Scenario B: Check for dropped items from regular mob kills
-        else
-            local numItems = GetNumLootItems()
-            for i = 1, numItems do
-                local icon, name = GetLootSlotInfo(i)
-                local link = GetLootSlotLink(i)
-                if name and link then
-                    local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
-                    local _, _, _, _, _, itemType, itemSubType, _, _, _, _, classID, subclassID = getInfo(link)
-                    local trackAs = nil
-                    
-                    if classID == 2 then
-                        trackAs = "Weapon"
-                    elseif classID == 4 then
-                        trackAs = "Armor"
-                    elseif classID == 0 then
-                        if itemSubType == "Food & Drink" or string.find(name, "Food") then
-                            trackAs = "Food"
-                        elseif itemSubType == "Potion" or string.find(name, "Potion") then
-                            trackAs = "Potion"
-                        elseif itemSubType == "Scroll" or string.find(name, "Scroll") then
-                            trackAs = "Scroll"
-                        end
-                    end
-                    
-                    if not trackAs and (TRACKED_CLOTH[name] or (string.find(name, "Cloth") and not (string.find(name, "Boots") or string.find(name, "Robe") or string.find(name, "Belt") or string.find(name, "Vest") or string.find(name, "Pants") or string.find(name, "Gloves")))) then
-                        trackAs = "Mob Drop"
-                    end
-                    
-                    if trackAs then
-                        lastGatherSpell = trackAs
-                        RecordGatheredNode(name, icon)
-                        lastGatherSpell = nil
-                    end
+            -- If we have a valid item link, it's an item (ignoring raw coins which have no link)
+            if name and link then
+                local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+                local _, _, _, _, _, itemType, itemSubType = getInfo(link)
+                
+                local category = "Other"
+                
+                -- Preserve fishing as it's hard to distinguish purely by itemType
+                if lastGatherSpell == "Fishing" then
+                    category = "Fishing"
+                -- Dynamically map standard sub-types to your UI categories
+                elseif itemSubType == "Herb" then category = "Herbalism"
+                elseif itemSubType == "Metal & Stone" then category = "Mining"
+                elseif itemSubType == "Leather" then category = "Skinning"
+                elseif itemSubType == "Cloth" then category = "Mob Drop"
+                -- For everything else (weapons, armor, food, quest items, etc)
+                elseif itemType then 
+                    category = itemType
                 end
+                
+                RecordGatheredNode(name, icon, category)
             end
         end
+        
+        -- Reset the gathering spell tracker since the loot window has been processed
+        lastGatherSpell = nil
 
     elseif event == "ZONE_CHANGED_NEW_AREA" or event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
         RefreshWorldMapPins()

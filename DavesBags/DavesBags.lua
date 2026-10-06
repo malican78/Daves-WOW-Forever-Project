@@ -280,12 +280,14 @@ function UpdateBagActionsMenu()
     end
 end
 
-menuBtn:SetScript("OnClick", function()
-    if bagActionsMenu:IsShown() then
-        bagActionsMenu:Hide()
-    else
-        UpdateBagActionsMenu()
-        bagActionsMenu:Show()
+menuBtn:SetScript("OnEnter", function()
+    UpdateBagActionsMenu()
+    bagActionsMenu:Show()
+end)
+
+bagActionsMenu:SetScript("OnUpdate", function(self)
+    if not (self:IsMouseOver() or menuBtn:IsMouseOver()) then
+        self:Hide()
     end
 end)
 
