@@ -57,6 +57,8 @@ local function createBorder(frame, color, thickness)
     right:SetPoint("TOPRIGHT", frame, "TOPRIGHT")
     right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT")
     right:SetWidth(thickness)
+    
+    return { top = top, bottom = bottom, left = left, right = right }
 end
 
 local function applyWindowBackground(frame)
@@ -230,10 +232,52 @@ local function SetQuestPinned(qID, state)
     end
 end
 
+local questContextMenu
+
 -- =========================================================
 -- Main Quest Tracker Panel Setup
 -- =========================================================
 local function BuildQuestWindow()
+    if not questContextMenu then
+        questContextMenu = CreateFrame("Frame", "DavesQuestsContextMenu", UIParent)
+        questContextMenu:SetSize(180, 50)
+        questContextMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+        questContextMenu:SetClampedToScreen(true)
+        questContextMenu:EnableMouse(true)
+        questContextMenu:Hide()
+        
+        local cmBg = questContextMenu:CreateTexture(nil, "BACKGROUND")
+        cmBg:SetAllPoints()
+        cmBg:SetColorTexture(0.05, 0.05, 0.05, 0.95)
+        questContextMenu.borders = createBorder(questContextMenu, {0.6, 0.5, 0.2}, 1)
+        
+        local pinOpt = CreateFrame("Button", nil, questContextMenu)
+        pinOpt:SetSize(170, 20)
+        pinOpt:SetPoint("TOP", questContextMenu, "TOP", 0, -5)
+        pinOpt.text = pinOpt:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        pinOpt.text:SetPoint("LEFT", 5, 0)
+        local pinHl = pinOpt:CreateTexture(nil, "HIGHLIGHT")
+        pinHl:SetColorTexture(1, 0.8, 0, 0.3)
+        pinHl:SetAllPoints()
+        questContextMenu.pinOpt = pinOpt
+        
+        local closeOpt = CreateFrame("Button", nil, questContextMenu)
+        closeOpt:SetSize(170, 20)
+        closeOpt:SetPoint("TOP", pinOpt, "BOTTOM", 0, -5)
+        closeOpt.text = closeOpt:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        closeOpt.text:SetPoint("LEFT", 5, 0)
+        closeOpt.text:SetText("Cancel")
+        local closeHl = closeOpt:CreateTexture(nil, "HIGHLIGHT")
+        closeHl:SetColorTexture(1, 0.8, 0, 0.3)
+        closeHl:SetAllPoints()
+        closeOpt:SetScript("OnClick", function() questContextMenu:Hide() end)
+        
+        questContextMenu:SetScript("OnUpdate", function(self)
+            if not self:IsMouseOver() and not (self.owner and self.owner:IsMouseOver()) then
+                self:Hide()
+            end
+        end)
+    end
     local frame = CreateFrame("Frame", "DavesQuestsFrame", UIParent)
     frame:SetSize(350, DavesQuestsDB.height or 480)
     frame:SetPoint(DavesQuestsDB.point or "TOPRIGHT", UIParent, DavesQuestsDB.point or "TOPRIGHT", DavesQuestsDB.x or -20, DavesQuestsDB.y or -80)
@@ -248,7 +292,10 @@ local function BuildQuestWindow()
     if frame.SetMaxResize then frame:SetMaxResize(350, 1200) end
     
     applyWindowBackground(frame)
-    createBorder(frame, WINDOW_BORDER_COLOR, 3)
+    frame.blackBg = frame:CreateTexture(nil, "BACKGROUND", nil, -6)
+    frame.blackBg:SetAllPoints(frame)
+    frame.blackBg:SetColorTexture(0, 0, 0, DavesQuestsDB.bgOpacity or 0.0)
+    frame.borders = createBorder(frame, WINDOW_BORDER_COLOR, 3)
     UpdateEscapeRegistration()
 
     local resizeBtn = CreateFrame("Button", nil, frame)
@@ -271,7 +318,8 @@ local function BuildQuestWindow()
     header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
     header:SetHeight(36)
     applyWindowBackground(header)
-    createBorder(header, WINDOW_BORDER_COLOR, 2)
+    header.borders = createBorder(header, WINDOW_BORDER_COLOR, 2)
+    frame.header = header
 
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton")
@@ -306,7 +354,7 @@ local function BuildQuestWindow()
     -- Options Dropdown Menu Frame
     local optionsMenu = CreateFrame("Frame", nil, frame)
     optionsMenu:SetSize(225, 54)
-    optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, -2)
+    optionsMenu:SetPoint("TOPRIGHT", optionsBtn, "BOTTOMRIGHT", 0, 0)
     optionsMenu:SetFrameStrata("FULLSCREEN_DIALOG")
     optionsMenu:SetToplevel(true)
     optionsMenu:SetFrameLevel(250)
@@ -342,6 +390,8 @@ local function BuildQuestWindow()
 
     local UpdateOptionsMenu
 
+    optionsMenu:SetSize(225, 170)
+
     local trackerOpt = CreateQuestMenuItem(optionsMenu, -5, function()
         DavesQuestsDB.hideBlizzTracker = not DavesQuestsDB.hideBlizzTracker
         SuppressBlizzardTracker()
@@ -352,6 +402,41 @@ local function BuildQuestWindow()
         DavesQuestsDB.lockWindow = not DavesQuestsDB.lockWindow
         UpdateEscapeRegistration()
         UpdateOptionsMenu()
+    end)
+
+    local autoOpenOpt = CreateQuestMenuItem(optionsMenu, -49, function()
+        DavesQuestsDB.preventAutoOpen = not DavesQuestsDB.preventAutoOpen
+        UpdateOptionsMenu()
+    end)
+
+    local autoPinOpt = CreateQuestMenuItem(optionsMenu, -71, function()
+        DavesQuestsDB.preventAutoPin = not DavesQuestsDB.preventAutoPin
+        UpdateOptionsMenu()
+    end)
+    
+    local nativeTrackerOpt = CreateQuestMenuItem(optionsMenu, -93, function()
+        DavesQuestsDB.nativeTrackerStyle = not DavesQuestsDB.nativeTrackerStyle
+        UpdateOptionsMenu()
+        if questWindow then questWindow:RefreshQuests() end
+    end)
+    
+    local opacitySlider = CreateFrame("Slider", "DavesQuestsOpacitySlider", optionsMenu, "OptionsSliderTemplate")
+    opacitySlider:SetPoint("TOP", optionsMenu, "TOP", 0, -135)
+    opacitySlider:SetWidth(180)
+    opacitySlider:SetMinMaxValues(0, 1)
+    opacitySlider:SetValueStep(0.05)
+    opacitySlider:SetObeyStepOnDrag(true)
+    opacitySlider:SetValue(DavesQuestsDB.bgOpacity or 0.0)
+    
+    _G[opacitySlider:GetName() .. "Low"]:SetText("0%")
+    _G[opacitySlider:GetName() .. "High"]:SetText("100%")
+    _G[opacitySlider:GetName() .. "Text"]:SetText("Tracker Background Opacity")
+    
+    opacitySlider:SetScript("OnValueChanged", function(self, value)
+        DavesQuestsDB.bgOpacity = value
+        if questWindow and questWindow.blackBg then
+            questWindow.blackBg:SetColorTexture(0, 0, 0, value)
+        end
     end)
 
     function UpdateOptionsMenu()
@@ -366,8 +451,31 @@ local function BuildQuestWindow()
         else
             lockOpt.text:SetText("|cff888888[ ]|r Lock Window (ESC closes)")
         end
+        
+        if DavesQuestsDB.preventAutoOpen then
+            autoOpenOpt.text:SetText("|cff888888[ ]|r Auto-Open Window (Disabled)")
+        else
+            autoOpenOpt.text:SetText("|cff008800[x]|r Auto-Open Window (Enabled)")
+        end
+
+        if DavesQuestsDB.preventAutoPin then
+            autoPinOpt.text:SetText("|cff888888[ ]|r Auto-Pin Quests (Disabled)")
+        else
+            autoPinOpt.text:SetText("|cff008800[x]|r Auto-Pin Quests (Enabled)")
+        end
+        
+        if DavesQuestsDB.nativeTrackerStyle then
+            nativeTrackerOpt.text:SetText("|cff008800[x]|r Native Tracker Style (Enabled)")
+        else
+            nativeTrackerOpt.text:SetText("|cff888888[ ]|r Native Tracker Style (Disabled)")
+        end
     end
 
+    optionsBtn:SetScript("OnEnter", function()
+        UpdateOptionsMenu()
+        optionsMenu:Show()
+    end)
+    
     optionsBtn:SetScript("OnClick", function()
         if optionsMenu:IsShown() then
             optionsMenu:Hide()
@@ -376,21 +484,38 @@ local function BuildQuestWindow()
             optionsMenu:Show()
         end
     end)
+    
+    optionsMenu:SetScript("OnUpdate", function(self)
+        if not optionsBtn:IsMouseOver() and not self:IsMouseOver() then
+            self:Hide()
+        end
+    end)
 
     frame:HookScript("OnHide", function()
         optionsMenu:Hide()
     end)
 
     -- Scroll Area
-    local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
+    local scroll = CreateFrame("ScrollFrame", nil, frame)
     scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 6, -6)
-    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -28, 8)
+    scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -6, 8) -- Reclaimed 22px from missing scrollbar
     scroll:HookScript("OnMouseDown", function()
         optionsMenu:Hide()
     end)
+    
+    -- Native mouse wheel scrolling
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local curY = self:GetVerticalScroll()
+        local maxY = self:GetVerticalScrollRange()
+        local newY = curY - (delta * 40)
+        if newY < 0 then newY = 0 end
+        if newY > maxY then newY = maxY end
+        self:SetVerticalScroll(newY)
+    end)
 
     local content = CreateFrame("Frame", nil, scroll)
-    content:SetSize(310, 1)
+    content:SetSize(330, 1)
     scroll:SetScrollChild(content)
 
     frame.emptyText = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
@@ -404,14 +529,14 @@ local function BuildQuestWindow()
     local function GetQuestRow(index)
         if not questRows[index] then
             local row = CreateFrame("Button", nil, content)
-            row:SetWidth(306)
+            row:SetWidth(330)
             row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
             -- Solid Parchment Card Background
             row.bg = row:CreateTexture(nil, "BACKGROUND")
             setTextureColor(row.bg, 0.99, 0.98, 0.94, 1.0)
             row.bg:SetAllPoints(row)
-            createBorder(row, { 0.45, 0.32, 0.18 }, 1)
+            row.borders = createBorder(row, { 0.45, 0.32, 0.18 }, 1)
 
             row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
             setTextureColor(row.highlight, 1, 0.85, 0.40, 0.35)
@@ -453,6 +578,23 @@ local function BuildQuestWindow()
             
             row.itemBtn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
             row.itemBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+            
+            local itemGlow = row.itemBtn:CreateTexture(nil, "OVERLAY")
+            itemGlow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+            itemGlow:SetBlendMode("ADD")
+            itemGlow:SetSize(52, 52)
+            itemGlow:SetPoint("CENTER", 0, 0)
+            itemGlow:SetVertexColor(1, 0.85, 0.1, 0.8)
+            
+            local glowAnim = itemGlow:CreateAnimationGroup()
+            glowAnim:SetLooping("BOUNCE")
+            local alphaAnim = glowAnim:CreateAnimation("Alpha")
+            alphaAnim:SetFromAlpha(0.2)
+            alphaAnim:SetToAlpha(1.0)
+            alphaAnim:SetDuration(0.8)
+            glowAnim:Play()
+            
+            row.itemBtn.glow = itemGlow
             
             row.itemBtn:SetScript("OnEnter", function(self)
                 if self.itemLink then
@@ -529,8 +671,32 @@ local function BuildQuestWindow()
 
             row:SetScript("OnClick", function(self, button)
                 if not self.questData then return end
-                if button == "RightButton" and IsAltKeyDown() then
-                    ExportQuestToDavesNotes(self.questData)
+                if button == "RightButton" then
+                    if IsAltKeyDown() then
+                        ExportQuestToDavesNotes(self.questData)
+                    elseif DavesQuestsDB.nativeTrackerStyle then
+                        questContextMenu.owner = self
+                        local qID = self.questData.questID
+                        local isPinned = DavesQuestsDB.pinnedQuests[qID]
+                        
+                        if isPinned then
+                            questContextMenu.pinOpt.text:SetText("Unpin from In Progress")
+                        else
+                            questContextMenu.pinOpt.text:SetText("Pin to In Progress")
+                        end
+                        
+                        questContextMenu.pinOpt:SetScript("OnClick", function()
+                            SetQuestPinned(qID, not isPinned)
+                            if questWindow then questWindow:RefreshQuests() end
+                            questContextMenu:Hide()
+                        end)
+                        
+                        local x, y = GetCursorPosition()
+                        local scale = UIParent:GetEffectiveScale()
+                        questContextMenu:ClearAllPoints()
+                        questContextMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x/scale, y/scale)
+                        questContextMenu:Show()
+                    end
                 elseif button == "LeftButton" then
                     if QuestMapFrame_OpenToQuestDetails then
                         QuestMapFrame_OpenToQuestDetails(self.questData.questID)
@@ -567,6 +733,57 @@ local function BuildQuestWindow()
         return sectionHeaders[index]
     end
 
+    local function UpdateNativeStyle()
+        local isNative = DavesQuestsDB.nativeTrackerStyle
+        if not questWindow then return end
+
+        if isNative then
+            if questWindow.background then questWindow.background:Hide() end
+            if questWindow.borders then for _, t in pairs(questWindow.borders) do t:Hide() end end
+            if questWindow.header then
+                if questWindow.header.background then questWindow.header.background:Hide() end
+                if questWindow.header.borders then for _, t in pairs(questWindow.header.borders) do t:Hide() end end
+            end
+        else
+            if questWindow.background then questWindow.background:Show() end
+            if questWindow.borders then for _, t in pairs(questWindow.borders) do t:Show() end end
+            if questWindow.header then
+                if questWindow.header.background then questWindow.header.background:Show() end
+                if questWindow.header.borders then for _, t in pairs(questWindow.header.borders) do t:Show() end end
+            end
+        end
+
+        for _, row in pairs(questRows) do
+            if isNative then
+                if row.bg then row.bg:Hide() end
+                if row.highlight then row.highlight:Hide() end
+                if row.borders then for _, t in pairs(row.borders) do t:Hide() end end
+                if row.title then
+                    row.title:SetTextColor(1, 0.82, 0)
+                    row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -40, -8)
+                end
+                if row.pinBtn then row.pinBtn:Hide() end
+                if row.itemBtn then
+                    row.itemBtn:ClearAllPoints()
+                    row.itemBtn:SetPoint("TOPRIGHT", row, "TOPRIGHT", -5, -5)
+                end
+            else
+                if row.bg then row.bg:Show() end
+                if row.highlight then row.highlight:Show() end
+                if row.borders then for _, t in pairs(row.borders) do t:Show() end end
+                if row.title then
+                    row.title:SetTextColor(0.50, 0.22, 0.02)
+                    row.title:SetPoint("TOPRIGHT", row, "TOPRIGHT", -125, -8)
+                end
+                if row.pinBtn then row.pinBtn:Show() end
+                if row.itemBtn then
+                    row.itemBtn:ClearAllPoints()
+                    row.itemBtn:SetPoint("TOPRIGHT", row.pinBtn, "BOTTOMRIGHT", -2, -4)
+                end
+            end
+        end
+    end
+
     function frame:RefreshQuests()
         local buckets = { current = {}, completed = {}, normal = {} }
         local numEntries = C_QuestLog.GetNumQuestLogEntries()
@@ -595,10 +812,10 @@ local function BuildQuestWindow()
                     
                     local itemLink, itemIcon
                     if GetQuestLogSpecialItemInfo then
-                        local name, link, rarity, icon = GetQuestLogSpecialItemInfo(index)
-                        if icon then
+                        local link, texture, charges, showItemWhenComplete = GetQuestLogSpecialItemInfo(index)
+                        if link and texture then
                             itemLink = link
-                            itemIcon = icon
+                            itemIcon = texture
                         end
                     end
 
@@ -667,19 +884,24 @@ local function BuildQuestWindow()
                     row.pinBtn:GetFontString():SetTextColor(0.95, 0.82, 0.48)
                 end
 
+                local isNative = DavesQuestsDB.nativeTrackerStyle
+                local colorComplete = isNative and "|cff888888" or "|cff007700"
+                local colorIncomplete = isNative and "|cffcccccc" or "|cff111111"
+                local colorProgress = isNative and "|cffcccccc" or "|cff444444"
+
                 local objLines = {}
                 if qData.isComplete then
-                    table.insert(objLines, ICON_CHECK .. " |cff007700Ready for turn-in!|r")
+                    table.insert(objLines, ICON_CHECK .. " " .. colorComplete .. "Ready for turn-in!|r")
                 elseif qData.objectives and #qData.objectives > 0 then
                     for _, obj in ipairs(qData.objectives) do
                         if obj.finished then
-                            table.insert(objLines, ICON_CHECK .. " |cff007700" .. (obj.text or "") .. "|r")
+                            table.insert(objLines, ICON_CHECK .. " " .. colorComplete .. (obj.text or "") .. "|r")
                         else
-                            table.insert(objLines, ICON_UNCHECK .. " |cff111111" .. (obj.text or "") .. "|r")
+                            table.insert(objLines, ICON_UNCHECK .. " " .. colorIncomplete .. (obj.text or "") .. "|r")
                         end
                     end
                 else
-                    table.insert(objLines, ICON_UNCHECK .. " |cff444444Quest in progress...|r")
+                    table.insert(objLines, ICON_UNCHECK .. " " .. colorProgress .. "Quest in progress...|r")
                 end
 
                 local formattedObjs = table.concat(objLines, "\n")
@@ -692,14 +914,14 @@ local function BuildQuestWindow()
                     if not InCombatLockdown() then
                         row.itemBtn:SetAttribute("item", qData.itemLink)
                     end
-                    row.objText:SetWidth(250)
+                    row.objText:SetWidth(isNative and 275 or 250)
                 else
                     row.itemBtn:Hide()
                     row.itemBtn.itemLink = nil
                     if not InCombatLockdown() then
                         row.itemBtn:SetAttribute("item", nil)
                     end
-                    row.objText:SetWidth(286)
+                    row.objText:SetWidth(isNative and 310 or 286)
                 end
 
                 local titleHeight = row.title:GetStringHeight() or 18
@@ -729,6 +951,8 @@ local function BuildQuestWindow()
         RenderSection("In Progress", buckets.current)
         RenderSection("Completed Quests", buckets.completed)
         RenderSection("Active Quests", buckets.normal)
+        
+        UpdateNativeStyle()
 
         content:SetHeight(math.max(1, currentY))
 
@@ -753,10 +977,17 @@ local function ToggleQuestWindow()
     if questWindow:IsShown() then
         questWindow:Hide()
         DavesQuestsDB.isOpen = false
+        DavesQuestsDB.hideBlizzTracker = false
     else
         questWindow:RefreshQuests()
         questWindow:Show()
         DavesQuestsDB.isOpen = true
+        DavesQuestsDB.hideBlizzTracker = true
+    end
+    
+    SuppressBlizzardTracker()
+    if type(UpdateOptionsMenu) == "function" then
+        UpdateOptionsMenu()
     end
 end
 
@@ -771,29 +1002,39 @@ local function FocusQuestInDavesQuests(qID)
     if not qID then return end
     
     if not questWindow then BuildQuestWindow() end
-    if not questWindow:IsShown() then
-        questWindow:Show()
-        DavesQuestsDB.isOpen = true
+    
+    -- Check user preference before automatically popping the window open
+    if not DavesQuestsDB.preventAutoOpen then
+        if not questWindow:IsShown() then
+            questWindow:Show()
+            DavesQuestsDB.isOpen = true
+        end
     end
     
-    SetQuestPinned(qID, true)
-    questWindow:RefreshQuests()
+    if not DavesQuestsDB.preventAutoPin then
+        SetQuestPinned(qID, true)
+    end
     
-    for _, row in pairs(questRows) do
-        if row:IsShown() and row.questData and row.questData.questID == qID then
-            local flash = row.flashTex
-            if not flash then
-                flash = row:CreateTexture(nil, "OVERLAY")
-                flash:SetAllPoints(row)
-                flash:SetColorTexture(0.2, 1, 0.2, 0.5)
-                row.flashTex = flash
+    if questWindow:IsShown() then
+        questWindow:RefreshQuests()
+        
+        for _, row in pairs(questRows) do
+            if row:IsShown() and row.questData and row.questData.questID == qID then
+                local flash = row.flashTex
+                if not flash then
+                    flash = row:CreateTexture(nil, "OVERLAY")
+                    flash:SetAllPoints(row)
+                    flash:SetColorTexture(0.2, 1, 0.2, 0.5)
+                    row.flashTex = flash
+                end
+                
+                flash:Show()
+                flash:SetAlpha(0.6)
+                if UIFrameFadeOut then
+                    UIFrameFadeOut(flash, 2.0, 0.6, 0)
+                end
+                break
             end
-            flash:Show()
-            flash:SetAlpha(0.6)
-            if UIFrameFadeOut then
-                UIFrameFadeOut(flash, 2.0, 0.6, 0)
-            end
-            break
         end
     end
 end
@@ -847,15 +1088,26 @@ eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 local objectiveCache = {}
 local function CheckForQuestProgress()
     if not C_QuestLog then return false end
-    local numEntries = C_QuestLog.GetNumQuestLogEntries()
     local progressDetected = false
 
+    local questsToCheck = {}
+    local numEntries = C_QuestLog.GetNumQuestLogEntries()
     for index = 1, numEntries do
         local info = C_QuestLog.GetInfo(index)
         if info and not info.isHeader and not info.isHidden then
-            local qID = info.questID
+            questsToCheck[info.questID] = true
+        end
+    end
+    
+    for qID in pairs(objectiveCache) do
+        questsToCheck[qID] = true
+    end
+
+    for qID in pairs(questsToCheck) do
+        if not C_QuestLog.GetLogIndexForQuestID(qID) then
+            objectiveCache[qID] = nil
+        else
             local objectives = C_QuestLog.GetQuestObjectives(qID)
-            
             local currentCount = 0
             if objectives then
                 for _, obj in ipairs(objectives) do
@@ -902,7 +1154,16 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, ...)
         CheckForQuestProgress() -- Initialize cache on login/enter world
     else
         if event == "QUEST_LOG_UPDATE" or event == "QUEST_WATCH_UPDATE" or event == "QUEST_ACCEPTED" then
-            CheckForQuestProgress()
+            local progressed = CheckForQuestProgress()
+            if progressed and not DavesQuestsDB.preventAutoOpen then
+                if questWindow and not questWindow:IsShown() then
+                    questWindow:Show()
+                    DavesQuestsDB.isOpen = true
+                    DavesQuestsDB.hideBlizzTracker = true
+                    SuppressBlizzardTracker()
+                    if type(UpdateOptionsMenu) == "function" then UpdateOptionsMenu() end
+                end
+            end
         end
         if questWindow and questWindow:IsShown() then
             questWindow:RefreshQuests()
@@ -946,3 +1207,70 @@ function DavesQuests_GetItemQuestRequirements(itemName)
 
     return #results > 0 and results or nil
 end
+-- =========================================================
+-- Minimap Button
+-- =========================================================
+local minimapBtn = CreateFrame("Button", "DavesQuestsMinimapBtn", Minimap)
+minimapBtn:SetSize(32, 32)
+minimapBtn:SetFrameLevel(8)
+minimapBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+minimapBtn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+local icon = minimapBtn:CreateTexture(nil, "BACKGROUND")
+icon:SetSize(20, 20)
+icon:SetPoint("TOPLEFT", 6, -6)
+icon:SetTexture("Interface\\Icons\\INV_Misc_Book_08") -- Quest book icon
+
+local border = minimapBtn:CreateTexture(nil, "OVERLAY")
+border:SetSize(54, 54)
+border:SetPoint("TOPLEFT", 0, 0)
+border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+
+local function UpdateMinimapButtonPosition()
+    local angle = math.rad(DavesQuestsDB.minimapAngle or 200)
+    -- Calculate radius dynamically so it perfectly hugs the outside edge regardless of minimap size
+    local radius = (Minimap:GetWidth() / 2) + (minimapBtn:GetWidth() / 2)
+    local x = math.cos(angle) * radius
+    local y = math.sin(angle) * radius
+    minimapBtn:SetPoint("CENTER", Minimap, "CENTER", x, y)
+end
+
+minimapBtn:SetScript("OnClick", function(self, button)
+    if button == "RightButton" then return end
+    ToggleQuestWindow()
+end)
+
+minimapBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+    GameTooltip:AddLine("Dave's Quests")
+    GameTooltip:AddLine("Left-Click to toggle tracker.", 1, 1, 1)
+    GameTooltip:AddLine("Right-Click and drag to move.", 1, 1, 1)
+    GameTooltip:Show()
+end)
+
+minimapBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+minimapBtn:RegisterForDrag("RightButton")
+local isDragging = false
+minimapBtn:SetScript("OnDragStart", function(self) isDragging = true end)
+minimapBtn:SetScript("OnDragStop", function(self) isDragging = false end)
+
+minimapBtn:SetScript("OnUpdate", function(self)
+    if isDragging then
+        local mx, my = Minimap:GetCenter()
+        local px, py = GetCursorPosition()
+        local scale = Minimap:GetEffectiveScale()
+        px, py = px / scale, py / scale
+        local angle = math.deg(math.atan2(py - my, px - mx))
+        if not DavesQuestsDB then return end
+        DavesQuestsDB.minimapAngle = angle
+        UpdateMinimapButtonPosition()
+    end
+end)
+
+-- Delay initial positioning until DB is loaded
+local minimapLoader = CreateFrame("Frame")
+minimapLoader:RegisterEvent("PLAYER_LOGIN")
+minimapLoader:SetScript("OnEvent", function()
+    UpdateMinimapButtonPosition()
+end)

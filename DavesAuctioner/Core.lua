@@ -39,3 +39,43 @@ end
 
 -- Expose addonTable for internal file sharing
 _G.DavesAuctioner = addonTable
+
+-- Master UI Frame
+local ahEventFrame = CreateFrame("Frame")
+ahEventFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
+ahEventFrame:SetScript("OnEvent", function(self, event)
+    if event == "AUCTION_HOUSE_SHOW" then
+        local parent = AuctionHouseFrame or AuctionFrame
+        if not parent or addonTable.MasterFrame then return end
+        
+        -- Create Master Overlay
+        local masterFrame = CreateFrame("Frame", "DavesAuctionerMasterFrame", parent)
+        masterFrame:SetPoint("TOPLEFT", parent, "TOPLEFT", 4, -60)
+        masterFrame:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -4, 4)
+        masterFrame:SetFrameStrata("HIGH")
+        masterFrame:SetFrameLevel(parent:GetFrameLevel() + 50)
+        
+        masterFrame.bg = masterFrame:CreateTexture(nil, "BACKGROUND")
+        masterFrame.bg:SetAllPoints()
+        masterFrame.bg:SetColorTexture(0.08, 0.08, 0.08, 1.0)
+        
+        masterFrame:Hide()
+        addonTable.MasterFrame = masterFrame
+        
+        -- Create Master Tab Button
+        local masterTab = CreateFrame("Button", "DavesAuctionerMasterTab", parent, "UIPanelButtonTemplate")
+        masterTab:SetSize(120, 24)
+        masterTab:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 300, -28)
+        masterTab:SetFrameStrata("TOOLTIP")
+        masterTab:SetFrameLevel(parent:GetFrameLevel() + 10)
+        masterTab:SetText("Dave's AH")
+        
+        masterTab:SetScript("OnClick", function()
+            if masterFrame:IsShown() then
+                masterFrame:Hide()
+            else
+                masterFrame:Show()
+            end
+        end)
+    end
+end)

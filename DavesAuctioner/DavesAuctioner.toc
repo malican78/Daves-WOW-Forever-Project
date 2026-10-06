@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 120100, 40402, 50504, 30404, 20506, 16001, 11506
 ## Title: Dave's Auctioner
 ## Notes: A lightweight, custom Auction House scanning and posting tool.
 ## Author: Dave
@@ -9,3 +9,4 @@ Core.lua
 Tooltips.lua
 Scanner.lua
 SellTab.lua
+BuyTab.lua
