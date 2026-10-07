@@ -3,5 +3,6 @@
 ## Notes: Tracks session incoming and outgoing gold/silver/copper.
 ## Author: Dave
 ## Version: 1.0.0
+## SavedVariables: DavesWalletDB
 
 DavesWallet.lua

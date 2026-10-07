@@ -488,6 +488,13 @@ local function RegisterDefaultFooterAddons()
             safeToggle("DavesMobileMenu", "DAVESMOBILEMENU")
         end, "Toggle on-screen dock launcher.")
     end
+
+    -- 7. Dave's Wallet
+    if isLoaded("DavesWallet") or (SlashCmdList and SlashCmdList["DAVESWALLET"]) then
+        DavesBags_RegisterMenuButton("DavesWallet", "Dave's Wallet", 133784, function()
+            safeToggle("DavesWallet", "DAVESWALLET")
+        end, "Track session incoming and outgoing gold/silver/copper.")
+    end
 end
 
 function SellAllJunk()

@@ -231,6 +231,15 @@ local function RegisterDefaultAddons()
             end
         end)
     end
+
+    -- 5. Dave's Wallet (Only shows if DavesWallet is active)
+    if isLoaded("DavesWallet") then
+        DavesMobileMenu_RegisterAddon("DavesWallet", "Dave's Wallet", 133784, function()
+            if SlashCmdList and SlashCmdList["DAVESWALLET"] then
+                SlashCmdList["DAVESWALLET"]("")
+            end
+        end)
+    end
 end
 
 -- =========================================================
