@@ -227,14 +227,34 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local finalDiff = currentMoney - sessionStartMoney
             local endTime = time()
             local duration = endTime - sessionStartTime
-            table.insert(DavesWalletDB.history, { 
-                date = date("%Y-%m-%d"), 
-                startTimeStr = date("%I:%M %p", sessionStartTime),
-                endTimeStr = date("%I:%M %p", endTime),
-                duration = duration,
-                diff = finalDiff,
-                breakdown = sessionBreakdown
-            })
+            
+            DavesWalletDB.currentGold = currentMoney
+            
+            local today = date("%Y-%m-%d")
+            local lastSession = DavesWalletDB.history[#DavesWalletDB.history]
+            
+            if lastSession and lastSession.date == today then
+                -- Condense into today's session
+                lastSession.endTimeStr = date("%I:%M %p", endTime)
+                lastSession.duration = lastSession.duration + duration
+                lastSession.diff = lastSession.diff + finalDiff
+                
+                -- Merge breakdowns
+                for k, v in pairs(sessionBreakdown) do
+                    lastSession.breakdown[k] = (lastSession.breakdown[k] or 0) + v
+                end
+            else
+                -- Create new daily session
+                table.insert(DavesWalletDB.history, { 
+                    date = today, 
+                    startTimeStr = date("%I:%M %p", sessionStartTime),
+                    endTimeStr = date("%I:%M %p", endTime),
+                    duration = duration,
+                    diff = finalDiff,
+                    breakdown = sessionBreakdown
+                })
+            end
+            
             if #DavesWalletDB.history > 100 then
                 table.remove(DavesWalletDB.history, 1)
             end
@@ -277,6 +297,22 @@ StaticPopupDialogs["DAVESWALLET_CONFIRM_PURGE"] = {
     end,
     OnAccept = function(self)
         if DavesWalletDB then DavesWalletDB.history = {} end
+        
+        -- Reset live session memory so it doesn't resurrect on /reload
+        if initialized then
+            sessionStartMoney = GetMoney()
+            sessionStartTime = time()
+            sessionBreakdown = {
+                ["Loot"] = 0,
+                ["Other"] = 0,
+                ["Vendor"] = 0,
+                ["Mail"] = 0,
+                ["Auction"] = 0,
+                ["Trade"] = 0,
+                ["Quest"] = 0,
+            }
+        end
+        
         if historyFrame and historyFrame.dropdownMenu then historyFrame.dropdownMenu:Hide() end
         if historyFrame then
             historyFrame.currentPage = 1

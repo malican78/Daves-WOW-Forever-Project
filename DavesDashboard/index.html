@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dave's Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <header class="glass-header">
+            <div class="logo-area">
+                <div class="glow-orb"></div>
+                <h1>Dave's Wallet <span class="accent">Dashboard</span></h1>
+            </div>
+            <div class="header-actions" style="display: flex; gap: 15px; align-items: center;">
+                <div class="status-indicator">
+                    <span class="pulse-dot"></span> Live Tracking
+                </div>
+                <button class="btn" id="settings-btn" style="padding: 6px 12px; font-size: 0.85rem;">⚙ Settings</button>
+            </div>
+        </header>
+
+        <main>
+            <section class="stats-grid">
+                <div class="stat-card glass-panel fade-in" style="animation-delay: 0.1s; background: linear-gradient(135deg, rgba(212, 175, 55, 0.1) 0%, rgba(22, 27, 34, 0.6) 100%);">
+                    <h3 style="color: var(--accent);">Current Wealth</h3>
+                    <div class="stat-value" id="current-gold">...</div>
+                </div>
+                <div class="stat-card glass-panel fade-in" style="animation-delay: 0.2s;">
+                    <h3>Total Net Profit</h3>
+                    <div class="stat-value" id="net-profit">...</div>
+                </div>
+                <div class="stat-card glass-panel fade-in" style="animation-delay: 0.3s;">
+                    <h3>Best Session</h3>
+                    <div class="stat-value positive" id="best-session">...</div>
+                </div>
+                <div class="stat-card glass-panel fade-in" style="animation-delay: 0.4s;">
+                    <h3>Avg Gold / Hr</h3>
+                    <div class="stat-value" id="avg-gold">...</div>
+                </div>
+            </section>
+
+            <section class="chart-section glass-panel fade-in" style="animation-delay: 0.5s;">
+                <div class="section-header">
+                    <h2>Session History</h2>
+                    <div class="chart-controls">
+                        <button class="btn active">Gold</button>
+                    </div>
+                </div>
+                <div class="chart-container" id="chart-container">
+                    <!-- Chart bars will be injected here -->
+                    <div class="loading">Waiting for WoW Data...</div>
+                </div>
+            </section>
+
+            <section class="breakdown-grid fade-in" style="animation-delay: 0.6s; margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+                <div class="glass-panel breakdown-card" style="padding: 1.5rem;">
+                    <h3 style="margin-bottom: 1rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem;">Top Income Sources</h3>
+                    <div id="income-list" class="source-list">
+                        <div class="loading" style="position: static; text-align: left; margin-top: 1rem;">No data...</div>
+                    </div>
+                </div>
+                <div class="glass-panel breakdown-card" style="padding: 1.5rem;">
+                    <h3 style="margin-bottom: 1rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem;">Top Expenses</h3>
+                    <div id="expense-list" class="source-list">
+                        <div class="loading" style="position: static; text-align: left; margin-top: 1rem;">No data...</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Setup Modal -->
+        <div id="setup-modal" class="modal-overlay hidden">
+            <div class="modal-content glass-panel fade-in">
+                <h2>Configure WoW Path</h2>
+                <p>Welcome! We couldn't auto-detect your WoW installation. Please enter the path to your <span class="accent">DavesWallet.lua</span> file.</p>
+                <div class="input-group">
+                    <label for="wow-path">File Path (e.g., C:/.../SavedVariables/DavesWallet.lua)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="wow-path" placeholder="Select your DavesWallet.lua file...">
+                        <button class="btn" id="browse-btn" style="white-space: nowrap;">Browse...</button>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn active" id="save-path-btn">Save Configuration</button>
+                    <button class="btn" id="close-modal-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
