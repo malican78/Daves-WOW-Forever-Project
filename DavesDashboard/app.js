@@ -17,6 +17,42 @@ function formatDuration(sec) {
     return `${h}h ${m}m`;
 }
 
+// --- Profile Handling ---
+let profileName = localStorage.getItem('profileName') || 'Dave The Farmer';
+let profileAvatarUrl = localStorage.getItem('profileAvatarUrl') || 'https://api.dicebear.com/7.x/avataaars/svg?seed=Dave&backgroundColor=c0aede';
+let selectedAvatarUrl = profileAvatarUrl;
+
+function updateProfileUI() {
+    const nameEl = document.getElementById('profile-name-text');
+    const imgEl = document.getElementById('profile-avatar-img');
+    if (nameEl) nameEl.textContent = profileName;
+    if (imgEl) imgEl.src = profileAvatarUrl;
+}
+
+// Call initially
+updateProfileUI();
+// ------------------------
+
+let savingsGoalGold = parseInt(localStorage.getItem('savingsGoal')) || 1000000;
+let currentGoldCopper = 0;
+
+function updateGoalUI() {
+    const goalCopper = savingsGoalGold * 10000;
+    const displayEl = document.getElementById('goal-amount-display');
+    const progressEl = document.getElementById('goal-progress');
+    
+    if (displayEl) displayEl.textContent = savingsGoalGold.toLocaleString() + 'g';
+    
+    let progress = 0;
+    if (goalCopper > 0) {
+        progress = (currentGoldCopper / goalCopper) * 100;
+    }
+    if (progress > 100) progress = 100;
+    if (progress < 0) progress = 0;
+    
+    if (progressEl) progressEl.style.width = `${progress}%`;
+}
+
 async function fetchData() {
     try {
         const res = await fetch('/api/wallet?t=' + new Date().getTime(), {
@@ -30,6 +66,8 @@ async function fetchData() {
         
         const data = jsonRes.data.history || [];
         const currentGold = jsonRes.data.currentGold || 0;
+        currentGoldCopper = currentGold;
+        updateGoalUI();
         
         const modal = document.getElementById('setup-modal');
         // Only auto-show if we need setup and it's our first time noticing. 
@@ -160,8 +198,11 @@ function renderBreakdown(breakdownObj) {
 
     incomes.forEach(item => {
         incomeList.innerHTML += `
-            <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <span style="color: var(--text-primary); font-weight: 600;">${item.key}</span>
+            <div class="list-item fade-in">
+                <div class="list-item-left">
+                    <div class="list-item-icon" style="background: rgba(46, 234, 130, 0.1); color: var(--positive);">↗</div>
+                    <span class="list-item-name">${item.key}</span>
+                </div>
                 <span class="positive">+${formatMoney(item.val)}</span>
             </div>
         `;
@@ -169,8 +210,11 @@ function renderBreakdown(breakdownObj) {
 
     expenses.forEach(item => {
         expenseList.innerHTML += `
-            <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <span style="color: var(--text-primary); font-weight: 600;">${item.key}</span>
+            <div class="list-item fade-in">
+                <div class="list-item-left">
+                    <div class="list-item-icon" style="background: rgba(195, 100, 250, 0.1); color: var(--accent-primary);">↙</div>
+                    <span class="list-item-name">${item.key}</span>
+                </div>
                 <span class="negative">${formatMoney(item.val)}</span>
             </div>
         `;
@@ -219,6 +263,85 @@ document.getElementById('browse-btn').addEventListener('click', async () => {
         }
     } catch (e) {
         console.error("Error opening file browser:", e);
+    }
+});
+
+// Goal Modal Handlers
+document.getElementById('set-goal-nav-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('goal-input').value = savingsGoalGold;
+    document.getElementById('goal-modal').classList.remove('hidden');
+});
+
+document.getElementById('close-goal-btn').addEventListener('click', () => {
+    document.getElementById('goal-modal').classList.add('hidden');
+});
+
+document.getElementById('save-goal-btn').addEventListener('click', () => {
+    const newGoal = parseInt(document.getElementById('goal-input').value);
+    if (newGoal && newGoal > 0) {
+        savingsGoalGold = newGoal;
+        localStorage.setItem('savingsGoal', savingsGoalGold);
+        document.getElementById('goal-modal').classList.add('hidden');
+        updateGoalUI();
+    }
+});
+
+// Profile Modal Handlers
+const premadeAvatars = document.querySelectorAll('.premade-avatar');
+
+function updatePremadeAvatarSelection() {
+    premadeAvatars.forEach(img => {
+        if (img.getAttribute('data-src') === selectedAvatarUrl) {
+            img.classList.add('selected');
+        } else {
+            img.classList.remove('selected');
+        }
+    });
+}
+
+document.getElementById('edit-profile-trigger').addEventListener('click', () => {
+    document.getElementById('profile-name-input').value = profileName;
+    selectedAvatarUrl = profileAvatarUrl;
+    updatePremadeAvatarSelection();
+    document.getElementById('profile-modal').classList.remove('hidden');
+});
+
+document.getElementById('close-profile-btn').addEventListener('click', () => {
+    document.getElementById('profile-modal').classList.add('hidden');
+});
+
+premadeAvatars.forEach(img => {
+    img.addEventListener('click', () => {
+        selectedAvatarUrl = img.getAttribute('data-src');
+        updatePremadeAvatarSelection();
+    });
+});
+
+document.getElementById('avatar-upload').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            selectedAvatarUrl = event.target.result;
+            // Deselect premade avatars when a file is uploaded
+            premadeAvatars.forEach(img => img.classList.remove('selected'));
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
+document.getElementById('save-profile-btn').addEventListener('click', () => {
+    const newName = document.getElementById('profile-name-input').value.trim();
+    if (newName) {
+        profileName = newName;
+        profileAvatarUrl = selectedAvatarUrl;
+        
+        localStorage.setItem('profileName', profileName);
+        localStorage.setItem('profileAvatarUrl', profileAvatarUrl);
+        
+        updateProfileUI();
+        document.getElementById('profile-modal').classList.add('hidden');
     }
 });
 
