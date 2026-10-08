@@ -47,11 +47,13 @@ local function applyWindowBackground(frame)
     if frame.background.SetVertTile then frame.background:SetVertTile(true) end
 end
 
--- Variables
 local sessionStartMoney = 0
 local sessionStartTime = 0
 local currentMoney = 0
 local initialized = false
+local realmName = ""
+local playerName = ""
+local charKey = ""
 
 local sessionBreakdown = {
     Vendor = 0,
@@ -201,8 +203,24 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
         UpdateMoneyDisplay()
     elseif event == "PLAYER_LOGIN" then
+        realmName = GetRealmName() or "UnknownRealm"
+        playerName = UnitName("player") or "UnknownPlayer"
+        charKey = realmName .. "-" .. playerName
+        
         DavesWalletDB = DavesWalletDB or {}
-        DavesWalletDB.history = DavesWalletDB.history or {}
+        
+        -- Migrate old flat data to current character if it exists
+        if DavesWalletDB.history then
+            DavesWalletDB[charKey] = {
+                history = DavesWalletDB.history,
+                currentGold = DavesWalletDB.currentGold
+            }
+            DavesWalletDB.history = nil
+            DavesWalletDB.currentGold = nil
+        end
+        
+        DavesWalletDB[charKey] = DavesWalletDB[charKey] or {}
+        DavesWalletDB[charKey].history = DavesWalletDB[charKey].history or {}
 
         if DavesMobileMenu_RegisterAddon then
             DavesMobileMenu_RegisterAddon("DavesWallet", "Dave's Wallet", 133784, function()
@@ -228,10 +246,11 @@ frame:SetScript("OnEvent", function(self, event, ...)
             local endTime = time()
             local duration = endTime - sessionStartTime
             
-            DavesWalletDB.currentGold = currentMoney
+            local db = DavesWalletDB[charKey]
+            db.currentGold = currentMoney
             
             local today = date("%Y-%m-%d")
-            local lastSession = DavesWalletDB.history[#DavesWalletDB.history]
+            local lastSession = db.history[#db.history]
             
             if lastSession and lastSession.date == today then
                 -- Condense into today's session
@@ -245,7 +264,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 end
             else
                 -- Create new daily session
-                table.insert(DavesWalletDB.history, { 
+                table.insert(db.history, { 
                     date = today, 
                     startTimeStr = date("%I:%M %p", sessionStartTime),
                     endTimeStr = date("%I:%M %p", endTime),
@@ -255,8 +274,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
                 })
             end
             
-            if #DavesWalletDB.history > 100 then
-                table.remove(DavesWalletDB.history, 1)
+            if #db.history > 100 then
+                table.remove(db.history, 1)
             end
         end
     end
@@ -296,7 +315,9 @@ StaticPopupDialogs["DAVESWALLET_CONFIRM_PURGE"] = {
         end
     end,
     OnAccept = function(self)
-        if DavesWalletDB then DavesWalletDB.history = {} end
+        if DavesWalletDB and charKey and DavesWalletDB[charKey] then 
+            DavesWalletDB[charKey].history = {} 
+        end
         
         -- Reset live session memory so it doesn't resurrect on /reload
         if initialized then
@@ -463,7 +484,7 @@ local function DrawGraph()
     end
     historyFrame.bars = historyFrame.bars or {}
     
-    local history = DavesWalletDB and DavesWalletDB.history or {}
+    local history = (DavesWalletDB and charKey and DavesWalletDB[charKey]) and DavesWalletDB[charKey].history or {}
     local numSessions = #history
     if numSessions == 0 then return end
     

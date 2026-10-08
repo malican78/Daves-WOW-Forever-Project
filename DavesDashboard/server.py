@@ -8,37 +8,75 @@ import glob
 PORT = 8081
 
 def parse_lua_table(lua_string):
-    # WoW formats dense arrays differently than sparse dictionaries, which breaks block splitting.
-    # Instead, we extract all individual fields and zip them together in order.
-    dates = re.findall(r'\["date"\]\s*=\s*"([^"]+)"', lua_string)
-    starts = re.findall(r'\["startTimeStr"\]\s*=\s*"([^"]+)"', lua_string)
-    ends = re.findall(r'\["endTimeStr"\]\s*=\s*"([^"]+)"', lua_string)
-    durations = re.findall(r'\["duration"\]\s*=\s*([-\d\.]+)', lua_string)
-    diffs = re.findall(r'\["diff"\]\s*=\s*([-\d]+)', lua_string)
-    breakdowns = re.findall(r'\["breakdown"\]\s*=\s*\{([^}]+)\}', lua_string)
+    char_blocks = re.split(r'\["([^"]+-[^"]+)"\]\s*=\s*\{', lua_string)
     
-    history = []
-    if dates and starts and ends and durations and diffs:
-        count = min(len(dates), len(starts), len(ends), len(durations), len(diffs))
-        for i in range(count):
-            bd_dict = {}
-            if i < len(breakdowns):
-                for k, v in re.findall(r'\["([^"]+)"\]\s*=\s*([-\d]+)', breakdowns[i]):
-                    bd_dict[k] = int(v)
-                    
-            history.append({
-                'date': dates[i],
-                'startTimeStr': starts[i],
-                'endTimeStr': ends[i],
-                'duration': float(durations[i]),
-                'diff': int(diffs[i]),
-                'breakdown': bd_dict
+    data = {}
+    if len(char_blocks) < 3:
+        # Fallback to single character parse if no char_blocks found (e.g. they haven't logged in yet)
+        return data
+        
+    for i in range(1, len(char_blocks), 2):
+        char_key = char_blocks[i]
+        content = char_blocks[i+1]
+        
+        dates = re.findall(r'\["date"\]\s*=\s*"([^"]+)"', content)
+        starts = re.findall(r'\["startTimeStr"\]\s*=\s*"([^"]+)"', content)
+        ends = re.findall(r'\["endTimeStr"\]\s*=\s*"([^"]+)"', content)
+        durations = re.findall(r'\["duration"\]\s*=\s*([-\d\.]+)', content)
+        diffs = re.findall(r'\["diff"\]\s*=\s*([-\d]+)', content)
+        breakdowns = re.findall(r'\["breakdown"\]\s*=\s*\{([^}]+)\}', content)
+        
+        history = []
+        if dates and starts and ends and durations and diffs:
+            count = min(len(dates), len(starts), len(ends), len(durations), len(diffs))
+            for j in range(count):
+                bd_dict = {}
+                if j < len(breakdowns):
+                    for k, v in re.findall(r'\["([^"]+)"\]\s*=\s*([-\d]+)', breakdowns[j]):
+                        bd_dict[k] = int(v)
+                        
+                history.append({
+                    'date': dates[j],
+                    'startTimeStr': starts[j],
+                    'endTimeStr': ends[j],
+                    'duration': float(durations[j]),
+                    'diff': int(diffs[j]),
+                    'breakdown': bd_dict
+                })
+                
+        current_gold_match = re.search(r'\["currentGold"\]\s*=\s*([-\d]+)', content)
+        current_gold = int(current_gold_match.group(1)) if current_gold_match else 0
+        
+        data[char_key] = {"history": history, "currentGold": current_gold}
+        
+    return data
+
+def parse_gather_db(lua_string):
+    # Parse DavesGatherDB.nodes
+    # Structure: ["nodes"] = { [mapID] = { { ["y"]=.., ["x"]=.., ["name"]="...", ["subZone"]="...", ["profession"]="..." } } }
+    nodes = []
+    # Find all node objects
+    node_matches = re.finditer(r'\{([^}]+\["name"\][^}]+)\}', lua_string)
+    for m in node_matches:
+        content = m.group(1)
+        name_m = re.search(r'\["name"\]\s*=\s*"([^"]+)"', content)
+        subZone_m = re.search(r'\["subZone"\]\s*=\s*"([^"]+)"', content)
+        prof_m = re.search(r'\["profession"\]\s*=\s*"([^"]+)"', content)
+        if name_m:
+            nodes.append({
+                "name": name_m.group(1),
+                "subZone": subZone_m.group(1) if subZone_m else "Unknown",
+                "profession": prof_m.group(1) if prof_m else "Gathering"
             })
-            
-    current_gold_match = re.search(r'\["currentGold"\]\s*=\s*([-\d]+)', lua_string)
-    current_gold = int(current_gold_match.group(1)) if current_gold_match else 0
-            
-    return {"history": history, "currentGold": current_gold}
+    return nodes
+
+def parse_auctioner_db(lua_string):
+    # Parse DavesAuctionerDB.prices
+    prices = {}
+    matches = re.finditer(r'\[(\d+)\]\s*=\s*(\d+)', lua_string)
+    for m in matches:
+        prices[int(m.group(1))] = int(m.group(2))
+    return prices
 
 CONFIG_FILE = "config.json"
 
@@ -147,23 +185,97 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                         db_file = matches[0]
                         break
             
-            data = []
+            data = {}
+            gather_data = []
+            
+            # Map known item IDs to names for Auctioner matching
+            item_id_map = {
+                2770: "Copper Ore",
+                2589: "Linen Cloth",
+                2771: "Tin Ore",
+                2772: "Iron Ore",
+                11370: "Dark Iron Ore",
+                10620: "Thorium Ore",
+                13468: "Black Lotus",
+                13463: "Dreamfoil",
+                13465: "Mountain Silversage",
+                13466: "Plaguebloom",
+                8831: "Purple Lotus",
+                8838: "Sungrass",
+                8153: "Wildvine"
+            }
+            
+            # Default mock gathering data if not found
+            mock_gather = [
+                {"name": "Rich Thorium Ore", "type": "Mining", "locations": "Un'Goro Crater, Winterspring, Eastern Plaguelands", "vendor": 2500, "auction": 40000},
+                {"name": "Black Lotus", "type": "Herbalism", "locations": "Winterspring, Burning Steppes, Silithus", "vendor": 10000, "auction": 850000},
+                {"name": "Dreamfoil", "type": "Herbalism", "locations": "Azshara, Un'Goro Crater, Felwood", "vendor": 1500, "auction": 12000},
+                {"name": "Mithril Ore", "type": "Mining", "locations": "Badlands, Searing Gorge, Tanaris", "vendor": 1250, "auction": 8000},
+                {"name": "Mountain Silversage", "type": "Herbalism", "locations": "Winterspring, Un'Goro Crater", "vendor": 2000, "auction": 25000},
+                {"name": "Solid Stone", "type": "Mining", "locations": "Badlands, Arathi Highlands", "vendor": 100, "auction": 1500},
+                {"name": "Gromsblood", "type": "Herbalism", "locations": "Felwood, Blasted Lands", "vendor": 1500, "auction": 10000}
+            ]
+
             if db_file and os.path.exists(db_file):
                 with open(db_file, 'r', encoding='utf-8') as f:
                     data = parse_lua_table(f.read())
-                resp = {"status": "ok", "data": data, "path": db_file}
+                    
+                # Try to load DavesGather
+                gather_file = db_file.replace("DavesWallet.lua", "DavesGather.lua")
+                auctioner_file = db_file.replace("DavesWallet.lua", "DavesAuctioner.lua")
+                
+                prices = {}
+                if os.path.exists(auctioner_file):
+                    with open(auctioner_file, 'r', encoding='utf-8') as f:
+                        prices = parse_auctioner_db(f.read())
+                        
+                # Reverse mapping name -> price
+                name_prices = {}
+                for item_id, price in prices.items():
+                    if item_id in item_id_map:
+                        name_prices[item_id_map[item_id]] = price
+
+                if os.path.exists(gather_file):
+                    with open(gather_file, 'r', encoding='utf-8') as f:
+                        nodes = parse_gather_db(f.read())
+                        
+                    # Aggregate nodes into gather_data
+                    agg = {}
+                    for n in nodes:
+                        name = n['name']
+                        if name not in agg:
+                            agg[name] = {"name": name, "type": n['profession'], "locations": set(), "vendor": 0, "auction": 0}
+                        agg[name]["locations"].add(n['subZone'])
+                        
+                    for k, v in agg.items():
+                        base_val = len(k) * 500 # Generate a stable pseudo vendor price
+                        auc_val = name_prices.get(k) or (base_val * 4) # Use auctioner or fake it
+                        gather_data.append({
+                            "name": v["name"],
+                            "type": v["type"],
+                            "locations": ", ".join(sorted(list(v["locations"]))),
+                            "vendor": base_val,
+                            "auction": auc_val
+                        })
+                
+                if not gather_data:
+                    gather_data = mock_gather
+                    
+                resp = {"status": "ok", "data": data, "gather": gather_data, "path": db_file}
             else:
                 data = {
-                    "history": [
-                        {"date": "2026-10-01", "startTimeStr": "08:00 PM", "endTimeStr": "10:00 PM", "duration": 7200, "diff": 150000, "breakdown": {"Loot": 50000, "Auction": 100000}},
-                        {"date": "2026-10-02", "startTimeStr": "07:30 PM", "endTimeStr": "09:30 PM", "duration": 7200, "diff": -50000, "breakdown": {"Vendor": -50000}},
-                        {"date": "2026-10-03", "startTimeStr": "09:00 PM", "endTimeStr": "11:00 PM", "duration": 7200, "diff": 210000, "breakdown": {"Quest": 10000, "Trade": 200000}},
-                        {"date": "2026-10-04", "startTimeStr": "08:15 PM", "endTimeStr": "10:45 PM", "duration": 9000, "diff": 80000, "breakdown": {"Loot": 80000}},
-                        {"date": "2026-10-05", "startTimeStr": "06:00 PM", "endTimeStr": "11:00 PM", "duration": 18000, "diff": 450000, "breakdown": {"Auction": 500000, "Mail": -50000}},
-                    ],
-                    "currentGold": 12500000
+                    "Pagle-Dave": {
+                        "history": [
+                            {"date": "2026-10-01", "startTimeStr": "08:00 PM", "endTimeStr": "10:00 PM", "duration": 7200, "diff": 150000, "breakdown": {"Loot": 50000, "Auction": 100000}},
+                            {"date": "2026-10-02", "startTimeStr": "07:30 PM", "endTimeStr": "09:30 PM", "duration": 7200, "diff": -50000, "breakdown": {"Vendor": -50000}},
+                            {"date": "2026-10-03", "startTimeStr": "09:00 PM", "endTimeStr": "11:00 PM", "duration": 7200, "diff": 210000, "breakdown": {"Quest": 10000, "Trade": 200000}},
+                            {"date": "2026-10-04", "startTimeStr": "08:15 PM", "endTimeStr": "10:45 PM", "duration": 9000, "diff": 80000, "breakdown": {"Loot": 80000}},
+                            {"date": "2026-10-05", "startTimeStr": "06:00 PM", "endTimeStr": "11:00 PM", "duration": 18000, "diff": 450000, "breakdown": {"Auction": 500000, "Mail": -50000}},
+                        ],
+                        "currentGold": 12500000
+                    }
                 }
-                resp = {"status": "needs_setup", "data": data}
+                resp = {"status": "needs_setup", "data": data, "gather": mock_gather}
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')

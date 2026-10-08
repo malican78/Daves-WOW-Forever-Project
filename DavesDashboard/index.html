@@ -6,6 +6,10 @@
     <title>Dave's Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="app-layout">
@@ -15,7 +19,9 @@
                 <span class="logo-icon">✧</span> Dave's Wallet
             </div>
             <nav class="sidebar-nav">
-                <a href="#" class="nav-item active"><span class="icon">⊞</span> Dashboard</a>
+                <a href="#" class="nav-item active" id="nav-dashboard"><span class="icon">⊞</span> Dashboard</a>
+                <a href="#" class="nav-item" id="nav-ledger"><span class="icon">📓</span> Session Ledger</a>
+                <a href="#" class="nav-item" id="nav-map"><span class="icon">📜</span> Gathering List</a>
                 <a href="#" class="nav-item" id="set-goal-nav-btn"><span class="icon">🎯</span> Set Goal</a>
             </nav>
             
@@ -32,13 +38,18 @@
         <!-- Main Content -->
         <main class="main-content">
             <header class="top-header">
-                <h1>Dashboard</h1>
+                <h1 id="page-title">Dashboard</h1>
                 <div class="user-profile">
+                    <select id="character-selector" class="character-select">
+                        <option value="">Loading...</option>
+                    </select>
                     <button id="settings-btn" class="icon-btn">⚙</button>
                 </div>
             </header>
 
-            <div class="dashboard-grid">
+            <!-- Dashboard View -->
+            <div id="view-dashboard" class="view-section active">
+                <div class="dashboard-grid">
                 <!-- Profile Stats Card -->
                 <div class="card profile-stats-card fade-in" style="animation-delay: 0.1s;">
                     <div class="profile-info">
@@ -68,15 +79,10 @@
                 <!-- Graph Card -->
                 <div class="card graph-card fade-in" style="animation-delay: 0.2s;">
                     <div class="card-header">
-                        <h3>Session History</h3>
-                        <div class="legend">
-                            <span class="dot green"></span> Profit
-                            <span class="dot purple"></span> Loss
-                        </div>
+                        <h3>Wealth Over Time</h3>
                     </div>
-                    <div class="chart-container" id="chart-container">
-                        <!-- Chart bars will be injected here -->
-                        <div class="loading">Waiting for WoW Data...</div>
+                    <div class="chart-container" style="position: relative; height: 100%; width: 100%; min-height: 250px;">
+                        <canvas id="wealth-chart"></canvas>
                     </div>
                 </div>
 
@@ -117,6 +123,71 @@
                     </div>
                 </div>
             </div>
+            </div> <!-- End Dashboard View -->
+
+            <!-- Session Ledger View -->
+            <div id="view-ledger" class="view-section hidden">
+                <div class="card fade-in" style="height: 100%; display: flex; flex-direction: column;">
+                    <div class="card-header" style="margin-bottom: 1.5rem;">
+                        <h2>Detailed Session Ledger</h2>
+                    </div>
+                    <div class="table-responsive" style="flex: 1; overflow-y: auto;">
+                        <table class="data-table" style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--glass-border); color: var(--text-secondary);">
+                                    <th style="padding: 1rem;">Date & Time</th>
+                                    <th style="padding: 1rem;">Duration</th>
+                                    <th style="padding: 1rem;">Net Profit/Loss</th>
+                                    <th style="padding: 1rem;">Top Income Source</th>
+                                    <th style="padding: 1rem;">Top Expense</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ledger-list-body">
+                                <tr>
+                                    <td colspan="5" class="loading">Loading ledger data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div> <!-- End Session Ledger View -->
+            
+            <!-- Gathering List View -->
+            <div id="view-map" class="view-section hidden">
+                <div class="card fade-in" style="height: 100%; display: flex; flex-direction: column;">
+                    <div class="card-header" style="margin-bottom: 1.5rem;">
+                        <h2>Gathering Database</h2>
+                        <input type="text" id="gathering-search" class="input-field" placeholder="Search items or locations..." style="width: 300px; padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                    </div>
+                    <div class="table-responsive" style="flex: 1; overflow-y: auto;">
+                        <table class="data-table" style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid var(--glass-border); color: var(--text-secondary); vertical-align: top;">
+                                    <th style="padding: 1rem; cursor: pointer;" class="sort-header" data-sort="name">
+                                        Item Name ⇕
+                                        <select id="filter-name" class="character-select" style="display: block; margin-top: 8px; width: 100%; padding: 0.25rem;"><option value="">All</option></select>
+                                    </th>
+                                    <th style="padding: 1rem; cursor: pointer;" class="sort-header" data-sort="type">
+                                        Type ⇕
+                                        <select id="filter-type" class="character-select" style="display: block; margin-top: 8px; width: 100%; padding: 0.25rem;"><option value="">All</option></select>
+                                    </th>
+                                    <th style="padding: 1rem; cursor: pointer;" class="sort-header" data-sort="locations">
+                                        Known Locations ⇕
+                                        <select id="filter-location" class="character-select" style="display: block; margin-top: 8px; width: 100%; padding: 0.25rem;"><option value="">All</option></select>
+                                    </th>
+                                    <th style="padding: 1rem; padding-top: 1.5rem; cursor: pointer;" class="sort-header" data-sort="vendor">Vendor Value ⇕</th>
+                                    <th style="padding: 1rem; padding-top: 1.5rem; cursor: pointer;" class="sort-header" data-sort="auction">Auction Value ⇕</th>
+                                </tr>
+                            </thead>
+                            <tbody id="gathering-list-body">
+                                <tr>
+                                    <td colspan="5" class="loading">Loading gathering data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div> <!-- End Gathering List View -->
         </main>
 
         <!-- Setup Modal -->

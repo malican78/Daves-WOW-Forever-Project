@@ -192,6 +192,28 @@ body {
     font-weight: 500;
 }
 
+.character-select {
+    background: rgba(0,0,0,0.3);
+    color: var(--text-primary);
+    border: 1px solid var(--glass-border);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.character-select:hover {
+    border-color: rgba(255,255,255,0.2);
+}
+
+.character-select option {
+    background: var(--bg-color);
+    color: var(--text-primary);
+}
+
 /* Grid & Cards */
 .dashboard-grid {
     display: grid;
@@ -554,3 +576,32 @@ body {
 
 .positive { color: var(--positive); }
 .negative { color: var(--negative); }
+
+/* Map View Styles */
+.view-section {
+    display: none;
+    height: calc(100vh - 100px); /* Adjust based on header height */
+    width: 100%;
+}
+.view-section.active {
+    display: block;
+}
+
+/* Data Table Styles */
+.data-table th {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
+}
+.data-table td {
+    padding: 1rem;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+}
+.data-table tr:hover {
+    background: rgba(255,255,255,0.03);
+}
+
+.hidden {
+    display: none !important;
+}
